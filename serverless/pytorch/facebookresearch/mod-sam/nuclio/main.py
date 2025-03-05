@@ -26,9 +26,6 @@ def handler(context, event):
     positive_points = data.get("positive_points", [])
     negative_points = data.get("negative_points", [])
     
-    print("OKKKK")
-    print("negative_points =", negative_points)
-    
     # Process the image with our modified ModelHandler.
     features, crop_bbox = context.user_data.model.handle(image, positive_points, negative_points)
 

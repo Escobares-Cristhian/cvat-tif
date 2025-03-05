@@ -38,8 +38,8 @@ class ModelHandler:
         orig_w = x_max - x_min
         orig_h = y_max - y_min
         # Enlarge width and height by factor of 2.
-        new_w = orig_w * 0.5
-        new_h = orig_h * 0.5
+        new_w = orig_w * 2
+        new_h = orig_h * 2
         new_x_min = int(max(cx - new_w / 2, 0))
         new_y_min = int(max(cy - new_h / 2, 0))
         new_x_max = int(min(cx + new_w / 2, w))
