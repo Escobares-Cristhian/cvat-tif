@@ -23,21 +23,21 @@ def handler(context, event):
     buf = io.BytesIO(base64.b64decode(data["image"]))
     image = Image.open(buf).convert("RGB")
     # Get selected points (if any)
-    positive_points = data.get("positive_points", [])
-    negative_points = data.get("negative_points", [])
+    positive_points = data.get("pos_points", [])
+    negative_points = data.get("neg_points", [])
     
-    print("OKKKK")
+    print("EJECUTANDO main.py DE SAM")
+    print("positive_points =", positive_points)
     print("negative_points =", negative_points)
     
     # Process the image with our modified ModelHandler.
-    features, crop_bbox = context.user_data.model.handle(image, positive_points, negative_points)
+    features = context.user_data.model.handle(image, positive_points, negative_points)
 
     return context.Response(
         body=json.dumps({
             'blob': base64.b64encode(
                 features.cpu().numpy() if features.is_cuda else features.numpy()
             ).decode(),
-            'crop_bbox': crop_bbox,
         }),
         headers={},
         content_type='application/json',
