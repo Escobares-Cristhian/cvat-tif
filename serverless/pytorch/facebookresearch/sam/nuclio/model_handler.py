@@ -49,6 +49,36 @@ class ModelHandler:
         new_y_max = int(min(cy + new_h / 2, h))
         return [new_x_min, new_y_min, new_x_max, new_y_max]
 
+    def _return_to_original_image_coordinates(self, features, bbox, image_shape):
+                # To map the cropped features back to the full image coordinates, we need to
+        # place the cropped features into a full-size feature map.
+        #
+        # The full image, when processed by SAM, produces features of shape [1, 256, 64, 64].
+        # Thus we create an empty tensor of that shape.
+        full_feat_shape = features.shape  # [1, 256, 64, 64]
+        fixed_features = torch.zeros_like(features)
+        
+        # Compute downsampling factors from image space to feature space for the full image.
+        down_x = image_shape[1] / full_feat_shape[-1]  # e.g. 289/64 ≈ 4.515625
+        down_y = image_shape[0] / full_feat_shape[-2]   # e.g. 191/64 ≈ 2.984375
+        
+        # Determine the region in the full feature map corresponding to the crop.
+        x_min_feat = int(round(bbox[0] / down_x))
+        x_max_feat = int(round(bbox[2] / down_x))
+        y_min_feat = int(round(bbox[1] / down_y))
+        y_max_feat = int(round(bbox[3] / down_y))
+        
+        # Calculate target region size in the full feature map.
+        target_h = y_max_feat - y_min_feat
+        target_w = x_max_feat - x_min_feat
+        
+        # Resize the predictor’s cropped features (always [1,256,64,64]) to the region size.
+        resized_features = torch.nn.functional.interpolate(
+            features, size=(target_h, target_w), mode='bilinear', align_corners=False
+        )
+        # Insert the resized cropped features into the full feature map.
+        fixed_features[:, :, y_min_feat:y_max_feat, x_min_feat:x_max_feat] = resized_features
+
     def handle(self, image, positive_points, negative_points):
         """
         Processes the input PIL image by:
@@ -85,38 +115,10 @@ class ModelHandler:
         # print("features.shape =", features.shape)
         # for feature in features:
         #     print("feature:", feature)
-
             
         # --- Return to the original image coordinates ---
-        # To map the cropped features back to the full image coordinates, we need to
-        # place the cropped features into a full-size feature map.
-        #
-        # The full image, when processed by SAM, produces features of shape [1, 256, 64, 64].
-        # Thus we create an empty tensor of that shape.
-        full_feat_shape = features.shape  # [1, 256, 64, 64]
-        fixed_features = torch.zeros_like(features)
+        fixed_features = self._return_to_original_image_coordinates(features, bbox, image_np.shape)
         
-        # Compute downsampling factors from image space to feature space for the full image.
-        down_x = image_np.shape[1] / full_feat_shape[-1]  # e.g. 289/64 ≈ 4.515625
-        down_y = image_np.shape[0] / full_feat_shape[-2]   # e.g. 191/64 ≈ 2.984375
-        
-        # Determine the region in the full feature map corresponding to the crop.
-        x_min_feat = int(round(bbox[0] / down_x))
-        x_max_feat = int(round(bbox[2] / down_x))
-        y_min_feat = int(round(bbox[1] / down_y))
-        y_max_feat = int(round(bbox[3] / down_y))
-        
-        # Calculate target region size in the full feature map.
-        target_h = y_max_feat - y_min_feat
-        target_w = x_max_feat - x_min_feat
-        
-        # Resize the predictor’s cropped features (always [1,256,64,64]) to the region size.
-        resized_features = torch.nn.functional.interpolate(
-            features, size=(target_h, target_w), mode='bilinear', align_corners=False
-        )
-        # Insert the resized cropped features into the full feature map.
-        fixed_features[:, :, y_min_feat:y_max_feat, x_min_feat:x_max_feat] = resized_features
-    
         print("Returning the fixed features.")
         return fixed_features
 
