@@ -30,6 +30,10 @@ class ModelLoader:
 
         # Load network
         self._net = ie_core.load_network(network, "CPU", num_requests=2)
+        
+        print("")
+        print("ENTRÓ A MODEL_LOADER DE OPENVINO")
+        print("")
 
     def _prepare_inputs(self, image, preprocessing):
         image = np.array(image)

@@ -10,14 +10,16 @@ import io
 from PIL import Image
 from model_handler import ModelHandler
 
+
 def init_context(context):
-    context.logger.info("Init context... 0%")
+    print("Init context... 0%")
     model = ModelHandler()
     context.user_data.model = model
-    context.logger.info("Init context...100%")
+    print("Init context...100%")
+
 
 def handler(context, event):
-    context.logger.info("call handler")
+    print("call handler")
     data = event.body
     # Decode the image from base64.
     buf = io.BytesIO(base64.b64decode(data["image"]))
@@ -27,8 +29,8 @@ def handler(context, event):
     negative_points = data.get("neg_points", [])
     
     print("EJECUTANDO main.py DE SAM")
-    print("positive_points =", positive_points)
-    print("negative_points =", negative_points)
+    print(f"positive_points = {positive_points}")
+    print(f"negative_points = {negative_points}")
     
     # Process the image with our modified ModelHandler.
     features = context.user_data.model.handle(image, positive_points, negative_points)

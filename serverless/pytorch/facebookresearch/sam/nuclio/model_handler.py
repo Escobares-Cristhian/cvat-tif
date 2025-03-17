@@ -6,6 +6,7 @@
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from segment_anything import sam_model_registry, SamPredictor
 
 import matplotlib.pyplot as plt
@@ -36,56 +37,67 @@ class ModelHandler:
         """
         h, w = image_shape[:2]
         if not points:
-            # If no points are provided, return full image bbox.
             return [0, 0, w, h]
         pts = np.array(points)
         x_min = np.min(pts[:, 0])
         y_min = np.min(pts[:, 1])
         x_max = np.max(pts[:, 0])
         y_max = np.max(pts[:, 1])
-        # Center of original bbox.
+        
+        # Compute the center of the original bbox.
         cx = (x_min + x_max) / 2.0
         cy = (y_min + y_max) / 2.0
         orig_w = x_max - x_min
         orig_h = y_max - y_min
         # Enlarge width and height by factor of 2.
-        new_w = orig_w * 1
-        new_h = orig_h * 1
+        new_w = orig_w * 2
+        new_h = orig_h * 2
         new_x_min = int(max(cx - new_w / 2, 0))
         new_y_min = int(max(cy - new_h / 2, 0))
         new_x_max = int(min(cx + new_w / 2, w))
         new_y_max = int(min(cy + new_h / 2, h))
         return [new_x_min, new_y_min, new_x_max, new_y_max]
 
-    def _return_to_original_image_coordinates(self, features, bbox, image_shape):
-        # To map the cropped features back to the full image coordinates, we need to
-        # place the cropped features into a full-size feature map.
-        #
-        # The full image, when processed by SAM, produces features of shape [1, 256, 64, 64].
-        # Thus we create an empty tensor of that shape.
-        full_feat_shape = features.shape  # [1, 256, 64, 64]
-        fixed_features = torch.zeros_like(features)
+    def _return_to_original_image_coordinates(self, features, crop_bbox, original_image_shape):
+        """
+        Transform the feature map from the cropped image back to the original image space.
+        
+        Parameters:
+            features (torch.Tensor): The feature map output from SAM's image_encoder with shape [1, 256, 64, 64].
+            crop_bbox (list): The bounding box used to crop the image [x_min, y_min, x_max, y_max].
+            original_image_shape (tuple): The shape of the original image (height, width).
 
-        # Ensure the target region size is within the full feature map bounds
-        target_h = max(1, y_max_feat - y_min_feat + 1)
-        target_w = max(1, x_max_feat - x_min_feat + 1)
+        Returns:
+            torch.Tensor: The feature map resized and repositioned in the original image space.
+        """
+        
+        # Extract crop bounding box and original dimensions
+        x_min, y_min, x_max, y_max = crop_bbox
+        orig_h, orig_w = original_image_shape[:2]
+        
+        # Compute the corresponding feature map coordinates for the crop region.
+        # The feature map has a fixed resolution (64x64)
+        feature_x_min = int(round((x_min / orig_w) * 64))
+        feature_y_min = int(round((y_min / orig_h) * 64))
+        feature_x_max = int(round((x_max / orig_w) * 64))
+        feature_y_max = int(round((y_max / orig_h) * 64))
+        
+        # Compute the target size for the cropped region in feature space
+        target_fH = feature_y_max - feature_y_min
+        target_fW = feature_x_max - feature_x_min
+        
+        # Resize the feature map from the cropped image to the target size
+        resized_features = F.interpolate(features, size=(target_fH, target_fW), mode='bilinear', align_corners=False)
+        
+        # Create a full-sized feature map for the original image (fixed size 64x64)
+        full_features = torch.zeros((1, 256, 64, 64), device=features.device)
+        
+        # Place the resized features in the correct position within the full feature map
+        full_features[:, :, feature_y_min:feature_y_max, feature_x_min:feature_x_max] = resized_features
+        
+        return full_features
 
-        # Resize the cropped features to the target size
-        resized_features = torch.nn.functional.interpolate(
-            features, size=(target_h, target_w), mode='bilinear', align_corners=False
-        )
-
-        # Handle potential out-of-bounds indices
-        x_min_feat = max(0, x_min_feat)
-        y_min_feat = max(0, y_min_feat)
-        x_max_feat = min(x_max_feat, full_feat_shape[-1] - 1)
-        y_max_feat = min(y_max_feat, full_feat_shape[-2] - 1)
-
-        # Insert the resized cropped features into the full feature map
-        fixed_features[:, :, y_min_feat:y_max_feat+1, x_min_feat:x_max_feat+1] = resized_features
-
-        return fixed_features
-
+    
     def handle(self, image, positive_points, negative_points):
         """
         Processes the input PIL image by:
@@ -97,57 +109,41 @@ class ModelHandler:
         Returns the image embedding and the crop bounding box.
         """
         print("EJECUTANDO model_handler.py DE SAM")
-        print("positive_points =", positive_points)
-        print("negative_points =", negative_points)
+        print(f"positive_points = {positive_points}")
+        print(f"negative_points = {negative_points}")
         image_np = np.array(image)
-        print("Tamaño de la imagen:", image_np.shape)
+        print(f"Tamaño de la imagen: {image_np.shape}")
+             
+        # Combine positive and negative points. If are 2 or more points
+        all_points = positive_points + negative_points
+        if len(all_points) >= 2:
+            bbox = self._compute_enlarged_bbox(all_points, image_np.shape)
+            x_min, y_min, x_max, y_max = bbox
+            print(f"Cropping image to bbox: {bbox}")
+            cropped_image = image_np[y_min:y_max, x_min:x_max, :]
+            plt.imshow(cropped_image)
+            plt.savefig("/tmp/debug_image.png")
+            plt.close()
+        else:
+            # If there are less than 2 negative points, use the full image.
+            bbox = [0, 0, image_np.shape[1], image_np.shape[0]]
+            cropped_image = image_np
         
         # Get the mean and standard deviation of the pixel values in the SAM model.
-        mean_img, std_img = self._get_mean_and_std_of_each_channel(image)
+        mean_img, std_img = self._get_mean_and_std_of_each_channel(cropped_image)
         
-        print("mean_img =", mean_img, "type(mean_img) =", type(mean_img))
-        print("std_img =", std_img, "type(std_img) =", type(std_img))
+        print(f"mean_img = {mean_img}, type(mean_img) = {type(mean_img)}")
+        print(f"std_img = {std_img}, type(std_img) = {type(std_img)}")
         self.sam_model.pixel_mean = torch.tensor(mean_img, dtype=torch.float32).view(3, 1, 1).to(self.device)
         self.sam_model.pixel_std = torch.tensor(std_img, dtype=torch.float32).view(3, 1, 1).to(self.device)
         
         self.predictor = SamPredictor(self.sam_model)
         
-        # # Combine positive and negative points. If are 2 or more negative points
-        # if len(negative_points) >= 2:    
-        #     all_points = positive_points + negative_points
-        #     bbox = self._compute_enlarged_bbox(all_points, image_np.shape)
-        #     x_min, y_min, x_max, y_max = bbox
-        #     print("Cropping image to bbox:", bbox)
-        #     cropped_image = image_np[y_min:y_max, x_min:x_max, :]
-        #     plt.imshow(cropped_image)
-        #     plt.savefig("/tmp/debug_image.png")
-        #     plt.close()
-        # else:
-        #     # If there are less than 2 negative points, use the full image.
-        #     bbox = [0, 0, image_np.shape[1], image_np.shape[0]]
-        #     cropped_image = image_np
-        
-        # ----- INIT: DEBUG -----
-        cropped_image = image_np
-        bbox = [0, 0, image_np.shape[1], image_np.shape[0]]
-        # ----- END:  DEBUG -----
-        
         # Pass the cropped image to SAM predictor.
-        print("Tamaño de la imagen recortada:", cropped_image.shape)
+        print(f"Tamaño de la imagen recortada: {cropped_image.shape}")
         self.predictor.set_image(cropped_image)
         features = self.predictor.get_image_embedding()
-        # print("features.shape =", features.shape)
-        # for feature in features:
-        #     print("feature:", feature)
-            
-        # # --- Return to the original image coordinates ---
-        # fixed_features = self._return_to_original_image_coordinates(
-        #     features, bbox, image_np.shape)
+        print(f"features.shape = {features.shape}")
         
-        # ----- INIT: DEBUG -----
-        fixed_features = features
-        # ----- END:  DEBUG -----
-        
-        print("Returning the fixed features.")
-        return fixed_features
+        return features
 
