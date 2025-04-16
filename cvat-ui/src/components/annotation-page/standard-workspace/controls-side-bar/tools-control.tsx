@@ -461,7 +461,7 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
     };
 
     private onInteraction = (e: Event): void => {
-        const { frame, isActivated } = this.props;
+        const { frame, isActivated, jobInstance } = this.props;
         const { activeInteractor } = this.state;
 
         if (!isActivated) {
@@ -484,18 +484,82 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
             }
         } else if (shapesUpdated) {
             const interactor = activeInteractor as MLModel;
-            this.interaction.latestRequest = {
-                interactor,
-                data: {
-                    frame,
-                    obj_bbox: convertShapesForInteractor(shapes, 'rectangle', 0),
-                    pos_points: convertShapesForInteractor(shapes, 'points', 0),
-                    neg_points: convertShapesForInteractor(shapes, 'points', 2),
-                },
-            };
+            // Retrieve the frame image dimensions using jobInstance.frames.get(frame)
+            jobInstance.frames.get(frame)
+                .then(({ height: imHeight, width: imWidth }: { height: number; width: number }) => {
+                    const image_maxX = imWidth - 1;
+                    const image_maxY = imHeight - 1;
 
-            this.runInteractionRequest(this.interaction.id);
+                    // Get the positive points from the current clicks
+                    const posPoints = convertShapesForInteractor(shapes, 'points', 0);
+
+                    // Calculate a 1024x1024 bounding box centered on the last point of posPoints,
+                    // then adjust it so the box is fully contained within the frame limits.
+                    if (posPoints && posPoints.length > 0) {
+                        const lastPoint = posPoints[posPoints.length - 1];
+                        const [cx, cy] = lastPoint;
+                        const boxSize = 1024;
+                        const halfSize = boxSize / 2; // 512
+
+                        // Compute initial x and y such that the box is centered on the last posPoint
+                        let x1 = Math.floor(cx - halfSize);
+                        let y1 = Math.floor(cy - halfSize);
+                        let x2 = x1 + boxSize;
+                        let y2 = y1 + boxSize;
+
+                        // Adjust horizontally: if the box goes out on the left or right, shift it to fit the limits
+                        if (x1 < 0) {
+                            x1 = 0;
+                            x2 = boxSize;
+                        } else if (x2 > image_maxX) {
+                            x2 = image_maxX;
+                            x1 = image_maxX - boxSize;
+                        }
+
+                        // Adjust vertically: if the box goes out on the top or bottom, shift it to fit the limits
+                        if (y1 < 0) {
+                            y1 = 0;
+                            y2 = boxSize;
+                        } else if (y2 > image_maxY) {
+                            y2 = image_maxY;
+                            y1 = image_maxY - boxSize;
+                        }
+
+                        const newBoundingBox = [x1, y1, x2, y2];
+
+                        // Update the stored bounding box only if it hasn't been set,
+                        // or if the last posPoint is outside the current bounding box.
+                        if (!this.interaction.currentBoundingBox) {
+                            this.interaction.currentBoundingBox = newBoundingBox;
+                            console.log('Calculated 1024x1024 Bounding Box centered on last click:', newBoundingBox);
+                        } else {
+                            const [curX1, curY1, curX2, curY2] = this.interaction.currentBoundingBox;
+                            if (cx < curX1 || cx > curX2 || cy < curY1 || cy > curY2) {
+                                this.interaction.currentBoundingBox = newBoundingBox;
+                                console.log('Updated 1024x1024 Bounding Box (last posPoint is outside current box):', newBoundingBox);
+                            } else {
+                                console.log('Last posPoint is inside the current bounding box; no update');
+                            }
+                        }
+                    }
+
+                    // Set the latest request using the unmodified obj_bbox conversion
+                    this.interaction.latestRequest = {
+                        interactor,
+                        data: {
+                            frame,
+                            obj_bbox: convertShapesForInteractor(shapes, 'rectangle', 0),
+                            pos_points: convertShapesForInteractor(shapes, 'points', 0),
+                            neg_points: convertShapesForInteractor(shapes, 'points', 2),
+                        },
+                    };
+                    this.runInteractionRequest(this.interaction.id);
+                })
+                .catch(error => {
+                    console.error('Error retrieving frame dimensions:', error);
+                });
         }
+
     };
 
     private onTracking = async (e: Event): Promise<void> => {
