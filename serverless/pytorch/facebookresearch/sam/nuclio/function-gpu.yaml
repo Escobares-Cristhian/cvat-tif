@@ -63,7 +63,7 @@ spec:
       kind: 'http'
       workerAvailabilityTimeoutMilliseconds: 10000
       attributes:
-        maxRequestBodySize: 33554432 # 32MB
+        maxRequestBodySize: 335544320 # 320MB
   resources:
     limits:
       nvidia.com/gpu: 1
