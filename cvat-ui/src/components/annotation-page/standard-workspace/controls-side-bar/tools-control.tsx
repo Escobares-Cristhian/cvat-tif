@@ -231,6 +231,7 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
             };
         } | null;
         hideMessage: (() => void) | null;
+        currentBoundingBox: [number, number, number, number] | null;
     };
 
     public constructor(props: Props) {
@@ -260,6 +261,7 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
             lastestApproximatedPoints: [],
             latestRequest: null,
             hideMessage: null,
+            currentBoundingBox: null,
         };
     }
 
@@ -464,103 +466,131 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
         const { frame, isActivated, jobInstance } = this.props;
         const { activeInteractor } = this.state;
 
-        if (!isActivated) {
-            return;
-        }
-
+        if (!isActivated) return;
         if (!this.interaction.id) {
             this.interaction.id = lodash.uniqueId('interaction_');
         }
 
         const { shapesUpdated, isDone, shapes } = (e as CustomEvent).detail;
         if (isDone) {
-            // make an object from current result
-            // do not make one more request
-            // prevent future requests if possible
             this.interaction.isAborted = true;
             this.interaction.latestRequest = null;
             if (this.interaction.lastestApproximatedPoints.length) {
                 this.constructFromPoints();
             }
-        } else if (shapesUpdated) {
-            const interactor = activeInteractor as MLModel;
-            // Retrieve the frame image dimensions using jobInstance.frames.get(frame)
-            jobInstance.frames.get(frame)
-                .then(({ height: imHeight, width: imWidth }: { height: number; width: number }) => {
-                    const image_maxX = imWidth - 1;
-                    const image_maxY = imHeight - 1;
+            return;
+        }
 
-                    // Get the positive points from the current clicks
-                    const posPoints = convertShapesForInteractor(shapes, 'points', 0);
+        if (!shapesUpdated) return;
 
-                    // Calculate a 1024x1024 bounding box centered on the last point of posPoints,
-                    // then adjust it so the box is fully contained within the frame limits.
-                    if (posPoints && posPoints.length > 0) {
-                        const lastPoint = posPoints[posPoints.length - 1];
-                        const [cx, cy] = lastPoint;
-                        const boxSize = 1024;
-                        const halfSize = boxSize / 2; // 512
+        const interactor = activeInteractor as MLModel;
+        // 1) get frame dimensions
+        jobInstance.frames.get(frame)
+            .then(({ height: imHeight, width: imWidth }) => {
+                const image_maxX = imWidth - 1;
+                const image_maxY = imHeight - 1;
 
-                        // Compute initial x and y such that the box is centered on the last posPoint
-                        let x1 = Math.floor(cx - halfSize);
-                        let y1 = Math.floor(cy - halfSize);
-                        let x2 = x1 + boxSize;
-                        let y2 = y1 + boxSize;
-
-                        // Adjust horizontally: if the box goes out on the left or right, shift it to fit the limits
-                        if (x1 < 0) {
-                            x1 = 0;
-                            x2 = boxSize;
-                        } else if (x2 > image_maxX) {
-                            x2 = image_maxX;
-                            x1 = image_maxX - boxSize;
-                        }
-
-                        // Adjust vertically: if the box goes out on the top or bottom, shift it to fit the limits
-                        if (y1 < 0) {
-                            y1 = 0;
-                            y2 = boxSize;
-                        } else if (y2 > image_maxY) {
-                            y2 = image_maxY;
-                            y1 = image_maxY - boxSize;
-                        }
-
-                        const newBoundingBox = [x1, y1, x2, y2];
-
-                        // Update the stored bounding box only if it hasn't been set,
-                        // or if the last posPoint is outside the current bounding box.
-                        if (!this.interaction.currentBoundingBox) {
-                            this.interaction.currentBoundingBox = newBoundingBox;
-                            console.log('Calculated 1024x1024 Bounding Box centered on last click:', newBoundingBox);
-                        } else {
-                            const [curX1, curY1, curX2, curY2] = this.interaction.currentBoundingBox;
-                            if (cx < curX1 || cx > curX2 || cy < curY1 || cy > curY2) {
-                                this.interaction.currentBoundingBox = newBoundingBox;
-                                console.log('Updated 1024x1024 Bounding Box (last posPoint is outside current box):', newBoundingBox);
-                            } else {
-                                console.log('Last posPoint is inside the current bounding box; no update');
-                            }
-                        }
-                    }
-
-                    // Set the latest request using the unmodified obj_bbox conversion
+                // 2) collect clicks
+                const posPoints = convertShapesForInteractor(shapes, 'points', 0);
+                if (!posPoints || !posPoints.length) {
+                    // no positive clicks yet – use standard flow
                     this.interaction.latestRequest = {
                         interactor,
                         data: {
                             frame,
                             obj_bbox: convertShapesForInteractor(shapes, 'rectangle', 0),
-                            pos_points: convertShapesForInteractor(shapes, 'points', 0),
+                            pos_points: [],
                             neg_points: convertShapesForInteractor(shapes, 'points', 2),
                         },
                     };
-                    this.runInteractionRequest(this.interaction.id);
-                })
-                .catch(error => {
-                    console.error('Error retrieving frame dimensions:', error);
-                });
-        }
+                    this.runInteractionRequest(this.interaction.id as string);
+                    return;
+                }
 
+                // 3) compute new 1024×1024 box around last click
+                const [cx, cy] = posPoints[posPoints.length - 1];
+                const boxSize = 1024, half = boxSize / 2;
+                let x1 = Math.floor(cx - half), y1 = Math.floor(cy - half);
+                let x2 = x1 + boxSize, y2 = y1 + boxSize;
+
+                // clamp to [0..image_max]
+                if (x1 < 0) { x1 = 0; x2 = boxSize; }
+                else if (x2 > image_maxX) { x2 = image_maxX; x1 = image_maxX - boxSize; }
+                if (y1 < 0) { y1 = 0; y2 = boxSize; }
+                else if (y2 > image_maxY) { y2 = image_maxY; y1 = image_maxY - boxSize; }
+
+                const newBB: [number, number, number, number] = [x1, y1, x2, y2];
+                const curBB = this.interaction.currentBoundingBox;
+
+                // 4) If outside, restart entire session
+                if (curBB && (cx < curBB[0] || cx > curBB[2] || cy < curBB[1] || cy > curBB[3])) {
+                    this.interaction.currentBoundingBox    = newBB;
+                    console.log('Click outside BB → restarting interactor. newBB:', newBB);
+
+                    // reset everything
+                    this.interaction.id                   = lodash.uniqueId('interaction_');
+                    this.interaction.isAborted           = false;
+                    this.interaction.latestRequest       = null;
+                    this.interaction.latestResponse      = { rle: [], points: [] };
+                    this.interaction.lastestApproximatedPoints = [];
+                    this.setState({ pointsReceived: false });
+
+                    // re‑launch the point interactor identically to initial click
+                    const params = {
+                        ...omit(activeInteractor.params.canvas, 'startWithBoxOptional'),
+                        ...(activeInteractor.params.canvas.startWithBoxOptional
+                            ? { startWithBox: this.state.startInteractingWithBox }
+                            : { startWithBox: activeInteractor.params.canvas.startWithBox }
+                        ),
+                    };
+                    const { canvasInstance, onInteractionStart } = this.props;
+                    canvasInstance.cancel();
+                    canvasInstance.interact({ shapeType: 'points', enabled: true, ...params });
+                    onInteractionStart(activeInteractor, this.state.activeLabelID, params);
+                    return;
+                }
+
+                // 5) Otherwise if no BB yet, set it
+                if (!curBB) {
+                    this.interaction.currentBoundingBox = newBB;
+                    console.log('Initial 1024×1024 BB:', newBB);
+                } else {
+                    console.log('Click inside existing BB; accumulating points.');
+                }
+
+                // 6) normal flow: batch up all clicks so far
+                this.interaction.latestRequest = {
+                    interactor,
+                    data: {
+                        frame,
+                        obj_bbox: convertShapesForInteractor(shapes, 'rectangle', 0),
+                        pos_points: posPoints,
+                        neg_points: convertShapesForInteractor(shapes, 'points', 2),
+                    },
+                };
+                this.runInteractionRequest(this.interaction.id as string);
+            })
+            .catch((error: any) => {
+                console.error('Error retrieving frame dimensions:', error);
+            });
     };
+
+    // helper to keep the “old” logic DRY
+    private sendAccumulatedRequest(interactor: MLModel, frame: number, shapes: number[][]): void {
+        const pos = convertShapesForInteractor(shapes, 'points', 0);
+        const neg = convertShapesForInteractor(shapes, 'points', 2);
+        this.interaction.latestRequest = {
+            interactor,
+            data: {
+                frame,
+                obj_bbox: convertShapesForInteractor(shapes, 'rectangle', 0),
+                pos_points: pos,
+                neg_points: neg,
+            },
+        };
+        this.runInteractionRequest(this.interaction.id as string);
+    }
+
 
     private onTracking = async (e: Event): Promise<void> => {
         const { trackedShapes, activeTracker, activeLabelID } = this.state;
