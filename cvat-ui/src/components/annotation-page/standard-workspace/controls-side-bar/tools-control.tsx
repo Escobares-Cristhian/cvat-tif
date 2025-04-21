@@ -53,6 +53,7 @@ import { switchToolsBlockerState } from 'actions/settings-actions';
 import withVisibilityHandling from './handle-popover-visibility';
 import ToolsTooltips from './interactor-tooltips';
 
+
 interface StateToProps {
     canvasInstance: Canvas;
     labels: Label[];
@@ -463,7 +464,7 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
     };
 
     private onInteraction = (e: Event): void => {
-        const { frame, isActivated, jobInstance } = this.props;
+        const { frame, isActivated, jobInstance} = this.props;
         const { activeInteractor } = this.state;
 
         if (!isActivated) return;
@@ -473,6 +474,14 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
 
         const { shapesUpdated, isDone, shapes } = (e as CustomEvent).detail;
         if (isDone) {
+            // 🎯 end of current object → force SAM to re-init on next click
+            console.log('tools-control.tsx: onInteraction isDone → resetting SAM for next object');
+            if (typeof (window as any).resetSamPlugin === 'function') {
+                (window as any).resetSamPlugin();
+            }
+            // drop the old bounding box so the next click is "initial"
+            this.interaction.currentBoundingBox = null;
+
             this.interaction.isAborted = true;
             this.interaction.latestRequest = null;
             if (this.interaction.lastestApproximatedPoints.length) {
