@@ -527,8 +527,16 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                     this.interaction.currentBoundingBox    = newBB;
                     console.log('Click outside BB → restarting interactor. newBB:', newBB);
 
-                    // reset everything
-                    this.interaction.id                   = lodash.uniqueId('interaction_');
+                    // **reset everything**: both our local session and the SAM plugin state
+                    // fire our global SAM reset hook
+                    if (typeof (window as any).resetSamPlugin === 'function') {
+                        console.log('tools-control.tsx:530 calling window.resetSamPlugin()');
+                        (window as any).resetSamPlugin();
+                    } else {
+                        console.warn('tools-control.tsx:530 window.resetSamPlugin() is undefined!');
+                    }
+
+                    this.interaction.id                  = lodash.uniqueId('interaction_');
                     this.interaction.isAborted           = false;
                     this.interaction.latestRequest       = null;
                     this.interaction.latestResponse      = { rle: [], points: [] };

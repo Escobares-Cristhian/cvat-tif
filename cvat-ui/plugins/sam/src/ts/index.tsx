@@ -147,6 +147,7 @@ const samPlugin: SAMPlugin = {
 
                         if (model.id === plugin.data.modelID) {
                             if (!plugin.data.initialized) {
+                                console.log('⏳ [SAM] enter() sees initialized=false → posting INIT to worker');
                                 samPlugin.data.worker.postMessage({
                                     action: WorkerAction.INIT,
                                     payload: {
@@ -162,6 +163,7 @@ const samPlugin: SAMPlugin = {
                                     }
 
                                     if (!e.data.error) {
+                                        console.log('✅ [SAM] worker INIT complete, setting initialized=true');
                                         samPlugin.data.initialized = true;
                                         resolvePromise();
                                     } else {
@@ -355,3 +357,25 @@ function register(): void {
 }
 
 window.addEventListener('plugins.ready', register, { once: true });
+
+;(window as any).resetSamPlugin = () => {
+    console.log('🗑️ [SAM] resetSamPlugin() called → clearing initialized flag, caches, and recreating worker');
+    // 1) reset all of SAM's state
+    samPlugin.data.initialized = false;
+    samPlugin.data.embeddings.clear();
+    samPlugin.data.lowResMasks.clear();
+    samPlugin.data.lastClicks = [];
+
+    // 2) terminate the old worker…
+    try {
+        samPlugin.data.worker.terminate();
+    } catch (err) {
+        console.warn('[SAM] failed to terminate previous worker', err);
+    }
+
+    // 3) …and replace it with a brand‑new one so INIT will actually run again
+    samPlugin.data.worker = new Worker(new URL('./inference.worker', import.meta.url));
+    if (samPlugin.callbacks.onStatusChange) {
+        samPlugin.callbacks.onStatusChange('reset');
+    }
+};
