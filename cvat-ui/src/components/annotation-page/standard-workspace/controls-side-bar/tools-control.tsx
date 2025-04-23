@@ -309,6 +309,7 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                 lastestApproximatedPoints: [],
                 latestRequest: null,
                 hideMessage: null,
+                currentBoundingBox: null,
             };
 
             this.setState({
@@ -465,6 +466,13 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
 
     private onInteraction = (e: Event): void => {
         const { frame, isActivated, jobInstance} = this.props;
+
+        // recover the last BB if we're just starting a fresh object
+        if (this.interaction.currentBoundingBox == null && (window as any).samLastBoundingBox) {
+            this.interaction.currentBoundingBox = (window as any).samLastBoundingBox;
+            console.log('tools-control.tsx: onInteraction → recovered BB:', this.interaction.currentBoundingBox);
+        }
+
         const { activeInteractor } = this.state;
 
         if (!isActivated) return;
@@ -474,19 +482,18 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
 
         const { shapesUpdated, isDone, shapes } = (e as CustomEvent).detail;
         if (isDone) {
-            // 🎯 end of current object → force SAM to re-init on next click
-            console.log('tools-control.tsx: onInteraction isDone → resetting SAM for next object');
-            if (typeof (window as any).resetSamPlugin === 'function') {
-                (window as any).resetSamPlugin();
-            }
-            // drop the old bounding box so the next click is "initial"
-            this.interaction.currentBoundingBox = null;
+            // // 🎯 end of current object → force SAM to re-init on next click
+            // console.log('🔄 2) tools-control.tsx: onInteraction isDone → resetting SAM for next object');
+            // if (typeof (window as any).resetSamPlugin === 'function') {
+            //     (window as any).resetSamPlugin();
+            // }
 
             this.interaction.isAborted = true;
             this.interaction.latestRequest = null;
             if (this.interaction.lastestApproximatedPoints.length) {
                 this.constructFromPoints();
             }
+            console.log('---------- END OF OBJECT INTERACTION ----------')
             return;
         }
 
@@ -531,18 +538,28 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                 const newBB: [number, number, number, number] = [x1, y1, x2, y2];
                 const curBB = this.interaction.currentBoundingBox;
 
+
                 // 4) If outside, restart entire session
+                // The following if is currBB is not undefined
+                console.log('Check if statement, cx:', cx, 'cy:', cy, 'curBB:', curBB);
+                // console.log('Check if statement, cx < curBB[0]:', cx < curBB[0]);
+                // console.log('Check if statement, cx > curBB[2]:', cx > curBB[2]);
+                // console.log('Check if statement, cy < curBB[1]:', cy < curBB[1]);
+                // console.log('Check if statement, cy > curBB[3]:', cy > curBB[3]);
+                console.log('Check if statement, curBB &&(cx < curBB[0] || cx > curBB[2] || cy < curBB[1] || cy > curBB[3]):', curBB && (cx < curBB[0] || cx > curBB[2] || cy < curBB[1] || cy > curBB[3]));
                 if (curBB && (cx < curBB[0] || cx > curBB[2] || cy < curBB[1] || cy > curBB[3])) {
-                    this.interaction.currentBoundingBox    = newBB;
-                    console.log('Click outside BB → restarting interactor. newBB:', newBB);
+                    this.interaction.currentBoundingBox = newBB;
+                    // persist for next object’s first click
+                    (window as any).samLastBoundingBox = newBB;
+                    console.log('✖️ Click outside BB → restarting interactor. newBB:', newBB);
 
                     // **reset everything**: both our local session and the SAM plugin state
                     // fire our global SAM reset hook
                     if (typeof (window as any).resetSamPlugin === 'function') {
-                        console.log('tools-control.tsx:530 calling window.resetSamPlugin()');
+                        console.log('🔄 1) tools-control.tsx:530 calling window.resetSamPlugin()');
                         (window as any).resetSamPlugin();
                     } else {
-                        console.warn('tools-control.tsx:530 window.resetSamPlugin() is undefined!');
+                        console.warn('💢 tools-control.tsx:530 window.resetSamPlugin() is undefined!');
                     }
 
                     this.interaction.id                  = lodash.uniqueId('interaction_');
@@ -570,6 +587,8 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                 // 5) Otherwise if no BB yet, set it
                 if (!curBB) {
                     this.interaction.currentBoundingBox = newBB;
+                    // persist for next object’s first click
+                    (window as any).samLastBoundingBox = newBB;
                     console.log('Initial 1024×1024 BB:', newBB);
                 } else {
                     console.log('Click inside existing BB; accumulating points.');

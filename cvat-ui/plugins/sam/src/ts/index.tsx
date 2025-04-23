@@ -55,6 +55,36 @@ interface SAMPlugin {
     };
 }
 
+// 0) deferred-reset flag: if someone set window.resetSamRequested = true,
+//     we’ll run our reset logic immediately, then clear the flag.
+;(window as any).samLastBoundingBox = null;
+
+;(window as any).resetSamRequested = (window as any).resetSamRequested || false;
+function attemptDeferredSamReset() {
+    if ((window as any).resetSamRequested) {
+        // clear the request
+        (window as any).resetSamRequested = false;
+
+        // perform the same cleanup you had at the bottom of the file:
+        console.log('🗑️ 1) [SAM] deferred reset → clearing initialized flag, caches, and recreating worker');
+        samPlugin.data.initialized = false;
+        samPlugin.data.embeddings.clear();
+        samPlugin.data.lowResMasks.clear();
+        samPlugin.data.lastClicks = [];
+        try {
+            samPlugin.data.worker.terminate();
+        } catch { /*ignore*/ }
+        samPlugin.data.worker = new Worker(new URL('./inference.worker', import.meta.url));
+        if (samPlugin.callbacks.onStatusChange) {
+            samPlugin.callbacks.onStatusChange('reset');
+        }
+    }
+}
+
+// run it immediately in case someone already set it:
+attemptDeferredSamReset();
+
+
 interface ClickType {
     clickType: 0 | 1 | 2 | 3;
     x: number;
@@ -359,7 +389,7 @@ function register(): void {
 window.addEventListener('plugins.ready', register, { once: true });
 
 ;(window as any).resetSamPlugin = () => {
-    console.log('🗑️ [SAM] resetSamPlugin() called → clearing initialized flag, caches, and recreating worker');
+    console.log('🗑️ 2) [SAM] resetSamPlugin() called → clearing initialized flag, caches, and recreating worker');
     // 1) reset all of SAM's state
     samPlugin.data.initialized = false;
     samPlugin.data.embeddings.clear();
