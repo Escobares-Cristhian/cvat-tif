@@ -471,6 +471,17 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
         if (this.interaction.currentBoundingBox == null && (window as any).samLastBoundingBox) {
             this.interaction.currentBoundingBox = (window as any).samLastBoundingBox;
             console.log('tools-control.tsx: onInteraction → recovered BB:', this.interaction.currentBoundingBox);
+            // ── redraw as 4-point polygon so it sticks around underneath the next click stream
+            {
+                const [x1, y1, x2, y2] = this.interaction.currentBoundingBox as [number, number, number, number];
+                this.props.canvasInstance.interact({
+                    enabled: true,
+                    intermediateShape: {
+                        shapeType: ShapeType.POLYGON,
+                        points: [x1, y1,   x2, y1,   x2, y2,   x1, y2],
+                    },
+                });
+            }
         }
 
         const { activeInteractor } = this.state;
@@ -482,12 +493,6 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
 
         const { shapesUpdated, isDone, shapes } = (e as CustomEvent).detail;
         if (isDone) {
-            // // 🎯 end of current object → force SAM to re-init on next click
-            // console.log('🔄 2) tools-control.tsx: onInteraction isDone → resetting SAM for next object');
-            // if (typeof (window as any).resetSamPlugin === 'function') {
-            //     (window as any).resetSamPlugin();
-            // }
-
             this.interaction.isAborted = true;
             this.interaction.latestRequest = null;
             if (this.interaction.lastestApproximatedPoints.length) {
@@ -551,6 +556,17 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                     this.interaction.currentBoundingBox = newBB;
                     // persist for next object’s first click
                     (window as any).samLastBoundingBox = newBB;
+                    // ── draw BB as a 4-point polygon
+                    {
+                        const [x1, y1, x2, y2] = newBB;
+                        this.props.canvasInstance.interact({
+                            enabled: true,
+                            intermediateShape: {
+                                shapeType: ShapeType.POLYGON,
+                                points: [x1, y1,   x2, y1,   x2, y2,   x1, y2],
+                            },
+                        });
+                    }
                     console.log('✖️ Click outside BB → restarting interactor. newBB:', newBB);
 
                     // **reset everything**: both our local session and the SAM plugin state
@@ -589,6 +605,17 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                     this.interaction.currentBoundingBox = newBB;
                     // persist for next object’s first click
                     (window as any).samLastBoundingBox = newBB;
+                    // ── draw initial BB as a 4-point polygon
+                    {
+                        const [x1, y1, x2, y2] = newBB;
+                        this.props.canvasInstance.interact({
+                            enabled: true,
+                            intermediateShape: {
+                                shapeType: ShapeType.POLYGON,
+                                points: [x1, y1,   x2, y1,   x2, y2,   x1, y2],
+                            },
+                       });
+                    }
                     console.log('Initial 1024×1024 BB:', newBB);
                 } else {
                     console.log('Click inside existing BB; accumulating points.');
