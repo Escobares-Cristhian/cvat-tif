@@ -243,101 +243,123 @@ const samPlugin: SAMPlugin = {
                             [job.id]: job,
                         };
 
+                        // Compute crop dims & unique embedding key
+                        const [x1, y1, x2, y2] = curBB;
+                        const cropWidth  = x2 - x1;
+                        const cropHeight = y2 - y1;
+                        const key = `${taskID}_${frame}`;
+
                         job.frames.get(frame)
-                            .then(({ height: imHeight, width: imWidth }: { height: number; width: number }) => {
-                                const key = `${taskID}_${frame}`;
-
-                                if (result) {
-                                    const bin = window.atob(result.blob);
-                                    const uint8Array = new Uint8Array(bin.length);
-                                    for (let i = 0; i < bin.length; i++) {
-                                        uint8Array[i] = bin.charCodeAt(i);
-                                    }
-                                    const float32Arr = new Float32Array(uint8Array.buffer);
-                                    plugin.data.embeddings.set(key, new Tensor('float32', float32Arr, [1, 256, 64, 64]));
+                        .then(({ height: imHeight, width: imWidth }) => {
+                            if (result) {
+                                const bin = window.atob(result.blob);
+                                const uint8Array = new Uint8Array(bin.length);
+                                for (let i = 0; i < bin.length; i++) {
+                                    uint8Array[i] = bin.charCodeAt(i);
                                 }
+                                const float32Arr = new Float32Array(uint8Array.buffer);
+                                plugin.data.embeddings.set(
+                                    key,
+                                    new Tensor('float32', float32Arr, [1, 256, 64, 64])
+                                );
+                            }
 
-                                const modelScale = {
-                                    width: imWidth,
-                                    height: imHeight,
-                                    scale: getModelScale(imWidth, imHeight),
-                                };
+                            // scale relative to the cropped patch, not full frame:
+                            const modelScale = {
+                                width:  cropWidth,
+                                height: cropHeight,
+                                scale:  getModelScale(cropWidth, cropHeight),
+                            };
 
-                                const clicks: ClickType[] = [];
-                                if (obj_bbox.length) {
-                                    clicks.push({ clickType: 2, x: obj_bbox[0][0], y: obj_bbox[0][1] });
-                                    clicks.push({ clickType: 3, x: obj_bbox[1][0], y: obj_bbox[1][1] });
-                                }
-
-                                pos_points.forEach((point) => {
-                                    clicks.push({ clickType: 1, x: point[0], y: point[1] });
+                            // shift every click into crop-local coords:
+                            const clicks: ClickType[] = [];
+                            if (obj_bbox.length) {
+                                clicks.push({
+                                    clickType: 2,
+                                    x: obj_bbox[0][0] - x1,
+                                    y: obj_bbox[0][1] - y1,
                                 });
-
-                                neg_points.forEach((point) => {
-                                    clicks.push({ clickType: 0, x: point[0], y: point[1] });
+                                clicks.push({
+                                    clickType: 3,
+                                    x: obj_bbox[1][0] - x1,
+                                    y: obj_bbox[1][1] - y1,
                                 });
-
-                                const isLowResMaskSuitable = JSON
-                                    .stringify(clicks.slice(0, -1)) === JSON.stringify(plugin.data.lastClicks);
-                                const feeds = modelData({
-                                    clicks,
-                                    tensor: plugin.data.embeddings.get(key) as Tensor,
-                                    modelScale,
-                                    maskInput: isLowResMaskSuitable ? plugin.data.lowResMasks.get(key) || null : null,
-                                });
-
-                                function toMatImage(input: number[], width: number, height: number): number[][] {
-                                    const image = Array(height).fill(0);
-                                    for (let i = 0; i < image.length; i++) {
-                                        image[i] = Array(width).fill(0);
-                                    }
-
-                                    for (let i = 0; i < input.length; i++) {
-                                        const row = Math.floor(i / width);
-                                        const col = i % width;
-                                        image[row][col] = input[i] > 0 ? 255 : 0;
-                                    }
-
-                                    return image;
-                                }
-
-                                function onnxToImage(input: any, width: number, height: number): number[][] {
-                                    return toMatImage(input, width, height);
-                                }
-
-                                plugin.data.worker.postMessage({
-                                    action: WorkerAction.DECODE,
-                                    payload: feeds,
-                                });
-
-                                plugin.data.worker.onmessage = ((e) => {
-                                    if (e.data.action !== WorkerAction.DECODE) {
-                                        const error = 'Caught unexpected action response from worker: ' +
-                                                `${e.data.action}, while "${WorkerAction.DECODE}" was expected`;
-                                        reject(new Error(error));
-                                    }
-
-                                    if (!e.data.error) {
-                                        const {
-                                            masks, lowResMasks, xtl, ytl, xbr, ybr,
-                                        } = e.data.payload;
-                                        const imageData = onnxToImage(masks.data, masks.dims[3], masks.dims[2]);
-                                        plugin.data.lowResMasks.set(key, lowResMasks);
-                                        plugin.data.lastClicks = clicks;
-
-                                        resolve({
-                                            mask: imageData,
-                                            bounds: [xtl, ytl, xbr, ybr],
-                                        });
-                                    } else {
-                                        reject(new Error(`Decoder error. ${e.data.error}`));
-                                    }
-                                });
-
-                                plugin.data.worker.onerror = ((error) => {
-                                    reject(error);
-                                });
+                            }
+                            pos_points.forEach(([px, py]) => {
+                                clicks.push({ clickType: 1, x: px - x1, y: py - y1 });
                             });
+                            neg_points.forEach(([nx, ny]) => {
+                                clicks.push({ clickType: 0, x: nx - x1, y: ny - y1 });
+                            });
+
+                            const isLowResMaskSuitable =
+                                JSON.stringify(clicks.slice(0, -1)) ===
+                                JSON.stringify(plugin.data.lastClicks);
+
+                            const feeds = modelData({
+                                clicks,
+                                tensor: plugin.data.embeddings.get(key) as Tensor,
+                                modelScale,
+                                maskInput: isLowResMaskSuitable
+                                    ? plugin.data.lowResMasks.get(key) || null
+                                    : null,
+                            });
+
+                            plugin.data.worker.postMessage({
+                                action: WorkerAction.DECODE,
+                                payload: feeds,
+                            });
+
+                            function toMatImage(input: number[], width: number, height: number): number[][] {
+                                const image = Array(height).fill(0);
+                                for (let i = 0; i < image.length; i++) {
+                                    image[i] = Array(width).fill(0);
+                                }
+
+                                for (let i = 0; i < input.length; i++) {
+                                    const row = Math.floor(i / width);
+                                    const col = i % width;
+                                    image[row][col] = input[i] > 0 ? 255 : 0;
+                                }
+
+                                return image;
+                            }
+
+                            function onnxToImage(input: any, width: number, height: number): number[][] {
+                                return toMatImage(input, width, height);
+                            }
+
+                            // when we get our decoded mask and bounds, re-offset into full-image coords:
+                            plugin.data.worker.onmessage = (e) => {
+                                if (e.data.action !== WorkerAction.DECODE) {
+                                    const error = `Caught unexpected action response from worker: ${e.data.action}, while "${WorkerAction.DECODE}" was expected`;
+                                    return reject(new Error(error));
+                                }
+
+                                if (!e.data.error) {
+                                    const { masks, lowResMasks, xtl, ytl, xbr, ybr } = e.data.payload;
+                                    const imageData = onnxToImage(
+                                        masks.data,
+                                        masks.dims[3],
+                                        masks.dims[2]
+                                    );
+                                    plugin.data.lowResMasks.set(key, lowResMasks);
+                                    plugin.data.lastClicks = clicks;
+
+                                    resolve({
+                                        mask:   imageData,
+                                        bounds: [xtl + x1, ytl + y1, xbr + x1, ybr + y1],
+                                    });
+                                } else {
+                                    reject(new Error(`Decoder error. ${e.data.error}`));
+                                }
+                            };
+
+                            plugin.data.worker.onerror = (error) => {
+                                reject(error);
+                            };
+                        });
+
                     });
                 },
             },
