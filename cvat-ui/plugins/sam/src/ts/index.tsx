@@ -215,9 +215,9 @@ const samPlugin: SAMPlugin = {
                     taskID: number,
                     model: MLModel,
                     {
-                        frame, pos_points, neg_points, obj_bbox,
+                        frame, pos_points, neg_points, obj_bbox, curBB,
                     }: {
-                        frame: number, pos_points: number[][], neg_points: number[][], obj_bbox: number[][],
+                        frame: number, pos_points: number[][], neg_points: number[][], obj_bbox: number[][], curBB: [number, number, number, number],
                     },
                 ): Promise<
                     {

@@ -394,7 +394,8 @@ class LambdaFunction:
                 "image": self._get_image(db_task, mandatory_arg("frame"), quality),
                 "pos_points": mandatory_arg("pos_points"),
                 "neg_points": mandatory_arg("neg_points"),
-                "obj_bbox": data.get("obj_bbox", None)
+                "obj_bbox": data.get("obj_bbox", None),
+                "curBB": data.get("curBB", None),
             })
         elif self.kind == FunctionKind.REID:
             payload.update({

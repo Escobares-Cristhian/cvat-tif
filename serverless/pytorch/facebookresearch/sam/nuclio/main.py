@@ -20,6 +20,14 @@ def handler(context, event):
     buf = io.BytesIO(base64.b64decode(data["image"]))
     image = Image.open(buf)
     image = image.convert("RGB")  #  to make sure image comes in RGB
+    # Extract current Bounding Box
+    cur_bbox = data["curBB"]
+
+    # Crop image
+    image = image.crop((cur_bbox[0], cur_bbox[1], cur_bbox[2], cur_bbox[3]))
+    print("image size", image.size)
+
+    # Get embedding
     features = context.user_data.model.handle(image)
 
     return context.Response(body=json.dumps({

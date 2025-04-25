@@ -229,6 +229,7 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                 neg_points: number[][];
                 pos_points: number[][];
                 obj_bbox: number[][];
+                curBB: [number, number, number, number] | null;
             };
         } | null;
         hideMessage: (() => void) | null;
@@ -522,6 +523,7 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                             obj_bbox: convertShapesForInteractor(shapes, 'rectangle', 0),
                             pos_points: [],
                             neg_points: convertShapesForInteractor(shapes, 'points', 2),
+                            curBB: this.interaction.currentBoundingBox,
                         },
                     };
                     this.runInteractionRequest(this.interaction.id as string);
@@ -542,6 +544,17 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
 
                 const newBB: [number, number, number, number] = [x1, y1, x2, y2];
                 const curBB = this.interaction.currentBoundingBox;
+
+                if (curBB){
+                    const [x1, y1, x2, y2] = curBB;
+                    this.props.canvasInstance.interact({
+                        enabled: true,
+                        intermediateShape: {
+                            shapeType: ShapeType.POLYGON,
+                            points: [x1, y1,   x2, y1,   x2, y2,   x1, y2],
+                        },
+                    });
+                }
 
 
                 // 4) If outside, restart entire session
@@ -629,6 +642,7 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                         obj_bbox: convertShapesForInteractor(shapes, 'rectangle', 0),
                         pos_points: posPoints,
                         neg_points: convertShapesForInteractor(shapes, 'points', 2),
+                        curBB: this.interaction.currentBoundingBox,
                     },
                 };
                 this.runInteractionRequest(this.interaction.id as string);
@@ -649,6 +663,7 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                 obj_bbox: convertShapesForInteractor(shapes, 'rectangle', 0),
                 pos_points: pos,
                 neg_points: neg,
+                curBB: this.interaction.currentBoundingBox,
             },
         };
         this.runInteractionRequest(this.interaction.id as string);
