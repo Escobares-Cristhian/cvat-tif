@@ -472,17 +472,6 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
         if (this.interaction.currentBoundingBox == null && (window as any).samLastBoundingBox) {
             this.interaction.currentBoundingBox = (window as any).samLastBoundingBox;
             console.log('tools-control.tsx: onInteraction → recovered BB:', this.interaction.currentBoundingBox);
-            // ── redraw as 4-point polygon so it sticks around underneath the next click stream
-            {
-                const [x1, y1, x2, y2] = this.interaction.currentBoundingBox as [number, number, number, number];
-                this.props.canvasInstance.interact({
-                    enabled: true,
-                    intermediateShape: {
-                        shapeType: ShapeType.POLYGON,
-                        points: [x1, y1,   x2, y1,   x2, y2,   x1, y2],
-                    },
-                });
-            }
         }
 
         const { activeInteractor } = this.state;
@@ -500,7 +489,6 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                 this.constructFromPoints();
             }
             console.log('---------- END OF OBJECT INTERACTION ----------')
-            return;
         }
 
         if (!shapesUpdated) return;
