@@ -569,7 +569,8 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                     this.interaction.currentBoundingBox = newBB;
                     // persist for next object’s first click
                     (window as any).samLastBoundingBox = newBB;
-                    // ── draw BB as a 4-point polygon
+
+                    // ── draw the new bounding‐box as a 4-point polygon
                     {
                         const [x1, y1, x2, y2] = newBB;
                         this.props.canvasInstance.interact({
@@ -582,23 +583,25 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                     }
                     console.log('✖️ Click outside BB → restarting interactor. newBB:', newBB);
 
-                    // **reset everything**: both our local session and the SAM plugin state
-                    // fire our global SAM reset hook
+                    // — before resetting SAM, stash your clicks —
+                    const savedPosPoints = convertShapesForInteractor(shapes, 'points', 0) || [];
+                    const savedNegPoints = convertShapesForInteractor(shapes, 'points', 2) || [];
+
+                    // **reset** the SAM plugin itself
                     if (typeof (window as any).resetSamPlugin === 'function') {
-                        console.log('🔄 1) tools-control.tsx:530 calling window.resetSamPlugin()');
+                        console.log('🔄 tools-control: calling resetSamPlugin()');
                         (window as any).resetSamPlugin();
                     } else {
-                        console.warn('💢 tools-control.tsx:530 window.resetSamPlugin() is undefined!');
+                        console.warn('💢 tools-control: resetSamPlugin() is undefined!');
                     }
 
-                    this.interaction.id                  = lodash.uniqueId('interaction_');
-                    this.interaction.isAborted           = false;
-                    this.interaction.latestRequest       = null;
-                    this.interaction.latestResponse      = { rle: [], points: [] };
-                    this.interaction.lastestApproximatedPoints = [];
-                    this.setState({ pointsReceived: false });
+                    // keep using the *same* interaction.id so it’s still “one” object
+                    this.interaction.isAborted = false;
+                    // make sure CVAT continues drawing your points
+                    this.setState({ pointsReceived: true });
 
-                    // re‑launch the point interactor identically to initial click
+                    // re-launch the point interactor exactly as before—
+                    // but **do not** canvasInstance.cancel() so the points stay visible
                     const params = {
                         ...omit(activeInteractor.params.canvas, 'startWithBoxOptional'),
                         ...(activeInteractor.params.canvas.startWithBoxOptional
@@ -607,11 +610,26 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                         ),
                     };
                     const { canvasInstance, onInteractionStart } = this.props;
-                    canvasInstance.cancel();
                     canvasInstance.interact({ shapeType: 'points', enabled: true, ...params });
                     onInteractionStart(activeInteractor, this.state.activeLabelID, params);
+
+                    // — now replay all your old clicks under the same session ID —
+                    this.interaction.latestRequest = {
+                        interactor,
+                        data: {
+                            frame,
+                            obj_bbox: convertShapesForInteractor(shapes, 'rectangle', 0),
+                            pos_points: savedPosPoints,
+                            neg_points: savedNegPoints,
+                            curBB: this.interaction.currentBoundingBox,
+                        },
+                    };
+                    // kick off the first inference immediately (same ID!)
+                    this.runInteractionRequest(this.interaction.id as string);
                     return;
                 }
+
+
 
                 // 5) Otherwise if no BB yet, set it
                 if (!curBB) {
