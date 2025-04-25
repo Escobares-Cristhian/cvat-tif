@@ -600,6 +600,12 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                     // make sure CVAT continues drawing your points
                     this.setState({ pointsReceived: true });
 
+                    // ── CLEAR any stuck red crosshair lines ──
+                    this.props.canvasInstance
+                    .html()
+                    .querySelectorAll('.cvat_canvas_crosshair')
+                    .forEach((node: Element) => node.remove());
+
                     // re-launch the point interactor exactly as before—
                     // but **do not** canvasInstance.cancel() so the points stay visible
                     const params = {
