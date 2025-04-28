@@ -53,6 +53,8 @@ import { switchToolsBlockerState } from 'actions/settings-actions';
 import withVisibilityHandling from './handle-popover-visibility';
 import ToolsTooltips from './interactor-tooltips';
 
+// Default crop‐window size (must match one of your dropdown options)
+let WINDOW_SIZE = 1024;
 
 interface StateToProps {
     canvasInstance: Canvas;
@@ -153,6 +155,7 @@ interface State {
     approxPolyAccuracy: number;
     mode: 'detection' | 'interaction' | 'tracking';
     portals: React.ReactPortal[];
+    windowSize: number;
 }
 
 type InteractorResults = Extract<Awaited<ReturnType<typeof core.lambda.call>>, { mask: number[][] }>;
@@ -250,6 +253,7 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
             pointsReceived: false,
             mode: 'interaction',
             portals: [],
+            windowSize: WINDOW_SIZE,
         };
 
         this.interaction = {
@@ -520,7 +524,8 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
 
                 // 3) compute new 1024×1024 box around last click
                 const [cx, cy] = posPoints[posPoints.length - 1];
-                const boxSize = 1024, half = boxSize / 2;
+                const boxSize = WINDOW_SIZE;
+                const half = boxSize / 2;
                 let x1 = Math.floor(cx - half), y1 = Math.floor(cy - half);
                 let x2 = x1 + boxSize, y2 = y1 + boxSize;
 
@@ -1319,6 +1324,24 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                             <Text>Start with a bounding box</Text>
                         </div>
                     )}
+
+                    <div style={{ marginTop: '8px' }}>
+                    <Text className='cvat-text-color'>Window size</Text>
+                    <Select
+                        style={{ width: '100%', marginTop: '4px' }}
+                        defaultValue={WINDOW_SIZE}
+                        onChange={(value: number) => {
+                        WINDOW_SIZE = value;          // save into your global var
+                        this.setState({ windowSize: value });
+                        }}
+                    >
+                        {[256, 512, 1024, 2048, 3072, 4096, 5120].map((sz) => (
+                        <Select.Option key={sz} value={sz}>
+                            {`${sz} (×${sz / 1024})`}
+                        </Select.Option>
+                        ))}
+                    </Select>
+                    </div>
                 </div>
                 <Row align='middle' justify='end'>
                     <Col>
