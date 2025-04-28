@@ -1331,8 +1331,16 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                         style={{ width: '100%', marginTop: '4px' }}
                         defaultValue={WINDOW_SIZE}
                         onChange={(value: number) => {
+                        // 1) update your global and component state
                         WINDOW_SIZE = value;          // save into your global var
-                        this.setState({ windowSize: value });
+                        this.setState({ windowSize: value }, () => {
+                                // 2) clear the old bounding-box so we don’t reuse it
+                                (window as any).samLastBoundingBox = null;
+                                // 3) tell SAM to re-init with the new window size
+                                if (typeof (window as any).resetSamPlugin === 'function') {
+                                    (window as any).resetSamPlugin();
+                                }
+                            });
                         }}
                     >
                         {[256, 512, 1024, 2048, 3072, 4096, 5120].map((sz) => (
