@@ -53,8 +53,8 @@ import { switchToolsBlockerState } from 'actions/settings-actions';
 import withVisibilityHandling from './handle-popover-visibility';
 import ToolsTooltips from './interactor-tooltips';
 
-import * as SVG from 'svg.js';
-import { computeWrappingBox } from './shared';
+import SVG from 'svg.js';
+
 
 // Default crop‐window size (must match one of your dropdown options)
 let WINDOW_SIZE = 1024;
@@ -159,6 +159,7 @@ interface State {
     mode: 'detection' | 'interaction' | 'tracking';
     portals: React.ReactPortal[];
     windowSize: number;
+    persistentBox: [number, number, number, number] | null;
 }
 
 type InteractorResults = Extract<Awaited<ReturnType<typeof core.lambda.call>>, { mask: number[][] }>;
@@ -218,8 +219,6 @@ function registerPlugin(): (callback: null | (() => void)) => void {
 const onRemoveAnnotations = registerPlugin();
 
 export class ToolsControlComponent extends React.PureComponent<Props, State> {
-    private persistentRect: null | any = null;
-
     private interaction: {
         id: string | null;
         isAborted: boolean;
@@ -259,6 +258,7 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
             mode: 'interaction',
             portals: [],
             windowSize: WINDOW_SIZE,
+            persistentBox: null,
         };
 
         this.interaction = {
@@ -557,8 +557,7 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                     (window as any).samLastBoundingBox = newBB;
 
                     // draw the new red box.
-                    this.clearPersistentBox();
-                    this.drawPersistentBox(newBB);
+                    this.setState({ persistentBox: newBB });
 
                     console.log('✖️ Click outside BB → restarting interactor. newBB:', newBB);
 
@@ -615,9 +614,11 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                 }
 
 
-
                 // 5) Otherwise if no BB yet, set it
                 if (!curBB) {
+                    // draw the new red box.
+                    this.setState({ persistentBox: newBB });
+                    // set the new BB
                     this.interaction.currentBoundingBox = newBB;
                     // persist for next object’s first click
                     (window as any).samLastBoundingBox = newBB;
@@ -1615,7 +1616,7 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
             interactors, detectors, trackers, isActivated, canvasInstance, labels, frameIsDeleted,
         } = this.props;
         const {
-            fetching, approxPolyAccuracy, pointsReceived, mode, portals, convertMasksToPolygons,
+            fetching, approxPolyAccuracy, pointsReceived, mode, portals, convertMasksToPolygons, persistentBox,
         } = this.state;
 
         if (![...interactors, ...detectors, ...trackers].length) return null;
@@ -1666,6 +1667,27 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
             </Modal>
         ) : null;
 
+        // now you already have `persistentBox` & `portals` from above
+        const wrapper = this.props.canvasInstance.html();
+        const svg = wrapper.querySelector('svg#cvat_canvas_content') as SVGSVGElement;
+        // or: document.getElementById('cvat_canvas_content')!
+
+        // Build our React portal:
+        const boxPortal = persistentBox && svg
+            ? ReactDOM.createPortal(
+                // a real SVG <rect> in the shapes layer
+                <rect
+                x={persistentBox[0]}
+                y={persistentBox[1]}
+                width={persistentBox[2] - persistentBox[0]}
+                height={persistentBox[3] - persistentBox[1]}
+                className="cvat-sam-bbox"
+                />,
+                // append into the same <svg> that CVAT uses for shapes
+                svg.querySelector('g.cvat_canvas_shapes') || svg,
+            )
+            : null;
+
         return showAnyContent ? (
             <>
                 <CustomPopover {...dynamicPopoverProps} placement='right' content={this.renderPopoverContent()}>
@@ -1674,64 +1696,14 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                 {interactionContent}
                 {detectionContent}
                 {portals}
+                {boxPortal}
             </>
         ) : (
             <Icon className=' cvat-tools-control cvat-disabled-canvas-control' component={AIToolsIcon} />
         );
+
+
     }
-
-    private clearPersistentBox(): void {
-        console.log('▶️ clearPersistentBox start');
-        const root = this.props.canvasInstance.html();
-        console.log('   canvas html element:', root);
-        const svg = root.querySelector('svg');
-        console.log('   found svg:', svg);
-            if (!svg) {
-            console.error('   ⚠️ No <svg> found!');
-                return;
-            }
-        const shapesGroup = svg.querySelector('g.cvat_canvas_shapes') || svg;
-        console.log('   shapesGroup:', shapesGroup);
-        const old = shapesGroup.querySelector('rect.cvat-sam-bbox');
-        console.log('   old rect:', old);
-            if (old) {
-            console.log('   removing old rect');
-                old.remove();
-        } else {
-            console.log('   no old rect to remove');
-        }
-        console.log('◀️ clearPersistentBox end');
-        }
-
-        private drawPersistentBox(newBB: [number, number, number, number]): void {
-        console.log('▶️ drawPersistentBox start, newBB=', newBB);
-        const root = this.props.canvasInstance.html();
-        console.log('   canvas html element:', root);
-        const svg = root.querySelector('svg');
-        console.log('   found svg:', svg);
-            if (!svg) {
-            console.error('   ⚠️ No <svg> found!');
-                return;
-            }
-        const [x1, y1, x2, y2] = newBB;
-        console.log('   coords:', {x1, y1, x2, y2});
-            const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-        console.log('   created rect element');
-            rect.setAttribute('class', 'cvat-sam-bbox');
-            rect.setAttribute('x', `${x1}`);
-            rect.setAttribute('y', `${y1}`);
-            rect.setAttribute('width', `${x2 - x1}`);
-            rect.setAttribute('height', `${y2 - y1}`);
-            rect.setAttribute('fill', 'none');
-            rect.setAttribute('stroke', 'red');
-            rect.setAttribute('stroke-width', '2');
-        console.log('   rect attributes set');
-            const shapesGroup = svg.querySelector('g.cvat_canvas_shapes') || svg;
-        console.log('   appending to shapesGroup:', shapesGroup);
-            shapesGroup.appendChild(rect);
-        console.log('   rect appended');
-        console.log('◀️ drawPersistentBox end');
-        }
 }
 
 export default connect(mapStateToProps, mapDispatchToProps)(ToolsControlComponent);

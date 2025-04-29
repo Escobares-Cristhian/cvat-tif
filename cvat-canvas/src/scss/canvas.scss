@@ -458,3 +458,11 @@ g.cvat_canvas_shape_occluded {
 .cvat-canvas-notification-list-shortcuts {
     color: yellow;
 }
+
+/* a clean, isolated red box */
+.cvat-sam-bbox {
+    fill: none;           /* transparent inside */
+    stroke: red;          /* red outline */
+    stroke-width: 2px;    /* thin but visible */
+    pointer-events: none; /* don’t block canvas clicks */
+  }
