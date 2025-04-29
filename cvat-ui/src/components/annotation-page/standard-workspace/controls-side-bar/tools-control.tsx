@@ -53,6 +53,9 @@ import { switchToolsBlockerState } from 'actions/settings-actions';
 import withVisibilityHandling from './handle-popover-visibility';
 import ToolsTooltips from './interactor-tooltips';
 
+import * as SVG from 'svg.js';
+import { computeWrappingBox } from './shared';
+
 // Default crop‐window size (must match one of your dropdown options)
 let WINDOW_SIZE = 1024;
 
@@ -215,6 +218,8 @@ function registerPlugin(): (callback: null | (() => void)) => void {
 const onRemoveAnnotations = registerPlugin();
 
 export class ToolsControlComponent extends React.PureComponent<Props, State> {
+    private persistentRect: null | any = null;
+
     private interaction: {
         id: string | null;
         isAborted: boolean;
@@ -538,18 +543,6 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                 const newBB: [number, number, number, number] = [x1, y1, x2, y2];
                 const curBB = this.interaction.currentBoundingBox;
 
-                if (curBB){
-                    const [x1, y1, x2, y2] = curBB;
-                    this.props.canvasInstance.interact({
-                        enabled: true,
-                        intermediateShape: {
-                            shapeType: ShapeType.POLYGON,
-                            points: [x1, y1,   x2, y1,   x2, y2,   x1, y2],
-                        },
-                    });
-                }
-
-
                 // 4) If outside, restart entire session
                 // The following if is currBB is not undefined
                 console.log('Check if statement, cx:', cx, 'cy:', cy, 'curBB:', curBB);
@@ -563,17 +556,10 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                     // persist for next object’s first click
                     (window as any).samLastBoundingBox = newBB;
 
-                    // ── draw the new bounding‐box as a 4-point polygon
-                    {
-                        const [x1, y1, x2, y2] = newBB;
-                        this.props.canvasInstance.interact({
-                            enabled: true,
-                            intermediateShape: {
-                                shapeType: ShapeType.POLYGON,
-                                points: [x1, y1,   x2, y1,   x2, y2,   x1, y2],
-                            },
-                        });
-                    }
+                    // draw the new red box.
+                    this.clearPersistentBox();
+                    this.drawPersistentBox(newBB);
+
                     console.log('✖️ Click outside BB → restarting interactor. newBB:', newBB);
 
                     // — before resetting SAM, stash your clicks —
@@ -635,17 +621,7 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                     this.interaction.currentBoundingBox = newBB;
                     // persist for next object’s first click
                     (window as any).samLastBoundingBox = newBB;
-                    // ── draw initial BB as a 4-point polygon
-                    {
-                        const [x1, y1, x2, y2] = newBB;
-                        this.props.canvasInstance.interact({
-                            enabled: true,
-                            intermediateShape: {
-                                shapeType: ShapeType.POLYGON,
-                                points: [x1, y1,   x2, y1,   x2, y2,   x1, y2],
-                            },
-                       });
-                    }
+
                     console.log('Initial 1024×1024 BB:', newBB);
                 } else {
                     console.log('Click inside existing BB; accumulating points.');
@@ -1703,6 +1679,59 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
             <Icon className=' cvat-tools-control cvat-disabled-canvas-control' component={AIToolsIcon} />
         );
     }
+
+    private clearPersistentBox(): void {
+        console.log('▶️ clearPersistentBox start');
+        const root = this.props.canvasInstance.html();
+        console.log('   canvas html element:', root);
+        const svg = root.querySelector('svg');
+        console.log('   found svg:', svg);
+            if (!svg) {
+            console.error('   ⚠️ No <svg> found!');
+                return;
+            }
+        const shapesGroup = svg.querySelector('g.cvat_canvas_shapes') || svg;
+        console.log('   shapesGroup:', shapesGroup);
+        const old = shapesGroup.querySelector('rect.cvat-sam-bbox');
+        console.log('   old rect:', old);
+            if (old) {
+            console.log('   removing old rect');
+                old.remove();
+        } else {
+            console.log('   no old rect to remove');
+        }
+        console.log('◀️ clearPersistentBox end');
+        }
+
+        private drawPersistentBox(newBB: [number, number, number, number]): void {
+        console.log('▶️ drawPersistentBox start, newBB=', newBB);
+        const root = this.props.canvasInstance.html();
+        console.log('   canvas html element:', root);
+        const svg = root.querySelector('svg');
+        console.log('   found svg:', svg);
+            if (!svg) {
+            console.error('   ⚠️ No <svg> found!');
+                return;
+            }
+        const [x1, y1, x2, y2] = newBB;
+        console.log('   coords:', {x1, y1, x2, y2});
+            const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        console.log('   created rect element');
+            rect.setAttribute('class', 'cvat-sam-bbox');
+            rect.setAttribute('x', `${x1}`);
+            rect.setAttribute('y', `${y1}`);
+            rect.setAttribute('width', `${x2 - x1}`);
+            rect.setAttribute('height', `${y2 - y1}`);
+            rect.setAttribute('fill', 'none');
+            rect.setAttribute('stroke', 'red');
+            rect.setAttribute('stroke-width', '2');
+        console.log('   rect attributes set');
+            const shapesGroup = svg.querySelector('g.cvat_canvas_shapes') || svg;
+        console.log('   appending to shapesGroup:', shapesGroup);
+            shapesGroup.appendChild(rect);
+        console.log('   rect appended');
+        console.log('◀️ drawPersistentBox end');
+        }
 }
 
 export default connect(mapStateToProps, mapDispatchToProps)(ToolsControlComponent);
