@@ -53,11 +53,15 @@ import { switchToolsBlockerState } from 'actions/settings-actions';
 import withVisibilityHandling from './handle-popover-visibility';
 import ToolsTooltips from './interactor-tooltips';
 
-import SVG from 'svg.js';
+// import SVG from 'svg.js';
+
+import { translateToCanvas } from '../../../../../../cvat-canvas/src/typescript/shared';
 
 
 // Default crop‐window size (must match one of your dropdown options)
 let WINDOW_SIZE = 1024;
+
+// interface Point { x: number; y: number; }
 
 interface StateToProps {
     canvasInstance: Canvas;
@@ -1675,15 +1679,64 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
         // Build our React portal:
         const boxPortal = persistentBox && svg
             ? ReactDOM.createPortal(
-                // a real SVG <rect> in the shapes layer
-                <rect
-                x={persistentBox[0]}
-                y={persistentBox[1]}
-                width={persistentBox[2] - persistentBox[0]}
-                height={persistentBox[3] - persistentBox[1]}
-                className="cvat-sam-bbox"
-                />,
-                // append into the same <svg> that CVAT uses for shapes
+                (() => {
+                // 1) Unpack your raw image coords:
+                const [x1, y1, x2, y2] = persistentBox;
+
+                // 2) Read the CSS positioning & transform off the <svg id="cvat_canvas_content">
+                const computed = window.getComputedStyle(svg);
+                // CSS left/top do the "pan"
+                const offsetX = parseFloat(computed.left);
+                const offsetY = parseFloat(computed.top);
+                // CSS transform is like "scale(0.1728) rotate(0deg)" or "matrix(a,b,c,d,e,f)"
+                const transform = computed.transform;
+
+                // 3) Extract the scale factor
+                let scale = 1;
+                if (transform.startsWith('matrix(')) {
+                    // matrix(a, b, c, d, e, f): a = scaleX, d = scaleY
+                    const nums = transform
+                    .slice(7, -1)
+                    .split(',')
+                    .map((v) => parseFloat(v));
+                    scale = nums[0]; // assume uniform scale
+                } else if (transform.startsWith('scale(')) {
+                    scale = parseFloat(transform.slice(6, -1).split(',')[0]);
+                }
+
+                console.log('scale', scale);
+                console.log('offsetX', offsetX);
+                console.log('offsetY', offsetY);
+
+                // 4) Apply pan+zoom to both corners
+                let sx1 = x1 * scale - offsetX;
+                let sy1 = y1 * scale - offsetY;
+                let sx2 = x2 * scale - offsetX;
+                let sy2 = y2 * scale - offsetY;
+
+                console.log('new BB', sx1, sy1, sx2, sy2);
+                console.log('previous BB', x1, y1, x2, y2);
+
+                // // return values to original, override the values of sx1, sy1, sx2, sy2
+                // sx1 = x1;
+                // sy1 = y1;
+                // sx2 = x2;
+                // sy2 = y2;
+                // console.log('new BB', sx1, sy1, sx2, sy2);
+
+                // 5) Compute the portal rect in SVG‐user‐space,
+                //    which will then be itself transformed+positioned by the CSS above.
+                return (
+                    <rect
+                    x={sx1}
+                    y={sy1}
+                    width={sx2 - sx1}
+                    height={sy2 - sy1}
+                    className="cvat-sam-bbox"
+                    />
+                );
+                })(),
+                // Insert into the *scaled* SVG so it inherits the same CSS pan/zoom
                 svg.querySelector('g.cvat_canvas_shapes') || svg,
             )
             : null;
