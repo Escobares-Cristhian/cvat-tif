@@ -53,7 +53,6 @@ import { switchToolsBlockerState } from 'actions/settings-actions';
 import withVisibilityHandling from './handle-popover-visibility';
 import ToolsTooltips from './interactor-tooltips';
 
-import BASE_STROKE_WIDTH from '../../../../../../cvat-canvas/src/typescript/consts';
 
 
 
@@ -1687,54 +1686,75 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
         const boxPortal = persistentBox && svg
             ? ReactDOM.createPortal(
                 (() => {
-                // 1) Unpack your raw image coords:
-                const [x1, y1, x2, y2] = persistentBox;
+            // 1) Unpack your raw image coords:
+            const [x1, y1, x2, y2] = persistentBox;
 
-                console.log('---------')
-                console.log('x1:', x1);
-                console.log('y1:', y1);
-                console.log('x2:', x2);
-                console.log('y2:', y2);
+            console.log('---------')
+            console.log('x1:', x1);
+            console.log('y1:', y1);
+            console.log('x2:', x2);
+            console.log('y2:', y2);
 
-                // 2) Get size of the SVG element
-                const svgWidth = svg.clientWidth;
-                const svgHeight = svg.clientHeight;
-                console.log('svgWidth', svgWidth);
-                console.log('svgHeight', svgHeight);
+            // 2) Get size of the SVG element
+            const svgWidth = svg.clientWidth;
+            const svgHeight = svg.clientHeight;
+            console.log('svgWidth', svgWidth);
+            console.log('svgHeight', svgHeight);
 
-                // 3) Get size of the image element
-                console.log('imageMaxX', imageMaxX);
-                console.log('imageMaxY', imageMaxY);
+            // 3) Get size of the image element
+            console.log('imageMaxX', imageMaxX);
+            console.log('imageMaxY', imageMaxY);
 
-                // 3.1) Calculate offset of the image element
-                const deltaX = (svgWidth - imageMaxX) / 2;
-                const deltaY = (svgHeight - imageMaxY) / 2;
+            // 3.1) Calculate offset of the image element
+            const deltaX = (svgWidth - imageMaxX) / 2;
+            const deltaY = (svgHeight - imageMaxY) / 2;
 
-                // 4) Apply pan+zoom to both corners
-                let sx1 = x1 + deltaX;
-                let sy1 = y1 + deltaY;
-                let sx2 = x2 + deltaX;
-                let sy2 = y2 + deltaY;
+            // 3.2) Offset to fine-adjust inside bbox: For all valid pixels be visible
+            const offsetXmin = -2.5;
+            const offsetXmax = 1.5;
+            const offsetYmin = -2.5;
+            const offsetYmax = 1.5;
 
-                console.log('sx BB', sx1, sy1, sx2, sy2);
-                console.log('---------')
+            // 4) Apply pan+zoom to both corners
+            let sx1 = x1 + deltaX + offsetXmin;
+            let sy1 = y1 + deltaY + offsetYmin;
+            let sx2 = x2 + deltaX + offsetXmax;
+            let sy2 = y2 + deltaY + offsetYmax;
 
-                // 5) Compute the portal rect in SVG‐user‐space,
-                //    which will then be itself transformed+positioned by the CSS above.
-                return (
+            console.log('sx BB', sx1, sy1, sx2, sy2);
+            console.log('---------')
+
+            // 5) Compute the portal rect in SVG‐user‐space,
+            //    which will then be itself transformed+positioned by the CSS above.
+            return (
+                <>
+                    {/* Black outline */}
                     <rect
-                    x={sx1}
-                    y={sy1}
-                    width={sx2 - sx1}
-                    height={sy2 - sy1}
-                    className="cvat-sam-bbox"
+                        x={sx1}
+                        y={sy1}
+                        width={sx2 - sx1}
+                        height={sy2 - sy1}
+                        stroke={"rgb(255, 255, 255)"}
+                        strokeWidth={4}
+                        className="cvat-sam-bbox"
                     />
-                );
-                })(),
-                // Insert into the *scaled* SVG so it inherits the same CSS pan/zoom
-                svg.querySelector('g.cvat_canvas_shapes') || svg,
-            )
-            : null;
+                    {/* White inset outline */}
+                    <rect
+                        x={sx1}
+                        y={sy1}
+                        width={sx2 - sx1}
+                        height={sy2 - sy1}
+                        stroke={"rgb(0, 0, 0)"}
+                        strokeWidth={1}
+                        className="cvat-sam-bbox"
+                    />
+                </>
+            );
+        })(),
+        // Insert into the *scaled* SVG so it inherits the same CSS pan/zoom
+        svg.querySelector('g.cvat_canvas_shapes') || svg,
+    )
+    : null;
 
         return showAnyContent ? (
             <>
