@@ -53,9 +53,8 @@ import { switchToolsBlockerState } from 'actions/settings-actions';
 import withVisibilityHandling from './handle-popover-visibility';
 import ToolsTooltips from './interactor-tooltips';
 
-// import SVG from 'svg.js';
+import BASE_STROKE_WIDTH from '../../../../../../cvat-canvas/src/typescript/consts';
 
-import { translateToCanvas } from '../../../../../../cvat-canvas/src/typescript/shared';
 
 
 // Default crop‐window size (must match one of your dropdown options)
@@ -1683,6 +1682,7 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
         const svg = wrapper.querySelector('svg#cvat_canvas_content') as SVGSVGElement;
         // or: document.getElementById('cvat_canvas_content')!
 
+
         // Build our React portal:
         const boxPortal = persistentBox && svg
             ? ReactDOM.createPortal(
@@ -1690,33 +1690,23 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                 // 1) Unpack your raw image coords:
                 const [x1, y1, x2, y2] = persistentBox;
 
-                // 2) Read the CSS positioning & transform off the <svg id="cvat_canvas_content">
-                const computed = window.getComputedStyle(svg);
-                // CSS left/top do the "pan"
-                const offsetX = parseFloat(computed.left);
-                const offsetY = parseFloat(computed.top);
-
                 console.log('---------')
                 console.log('x1:', x1);
                 console.log('y1:', y1);
                 console.log('x2:', x2);
                 console.log('y2:', y2);
-                console.log('computed', computed);
-                console.log('offsetX', offsetX);
-                console.log('offsetY', offsetY);
-                console.log('transformOrigin', computed.transformOrigin);
-                const transformOriginX = parseFloat(computed.transformOrigin.split(' ')[0]);
-                const transformOriginY = parseFloat(computed.transformOrigin.split(' ')[1]);
 
-                // Get size of the SVG element
+                // 2) Get size of the SVG element
                 const svgWidth = svg.clientWidth;
                 const svgHeight = svg.clientHeight;
                 console.log('svgWidth', svgWidth);
                 console.log('svgHeight', svgHeight);
 
+                // 3) Get size of the image element
                 console.log('imageMaxX', imageMaxX);
                 console.log('imageMaxY', imageMaxY);
 
+                // 3.1) Calculate offset of the image element
                 const deltaX = (svgWidth - imageMaxX) / 2;
                 const deltaY = (svgHeight - imageMaxY) / 2;
 
