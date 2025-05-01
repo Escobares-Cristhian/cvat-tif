@@ -164,6 +164,8 @@ interface State {
     portals: React.ReactPortal[];
     windowSize: number;
     persistentBox: [number, number, number, number] | null;
+    imageMaxX: number;
+    imageMaxY: number;
 }
 
 type InteractorResults = Extract<Awaited<ReturnType<typeof core.lambda.call>>, { mask: number[][] }>;
@@ -263,6 +265,8 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
             portals: [],
             windowSize: WINDOW_SIZE,
             persistentBox: null,
+            imageMaxX: 0,
+            imageMaxY: 0,
         };
 
         this.interaction = {
@@ -512,6 +516,9 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
             .then(({ height: imHeight, width: imWidth }) => {
                 const image_maxX = imWidth - 1;
                 const image_maxY = imHeight - 1;
+
+                // save into state for render()
+                this.setState({ imageMaxX: image_maxX, imageMaxY: image_maxY });
 
                 // 2) collect clicks
                 const posPoints = convertShapesForInteractor(shapes, 'points', 0);
@@ -1620,7 +1627,7 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
             interactors, detectors, trackers, isActivated, canvasInstance, labels, frameIsDeleted,
         } = this.props;
         const {
-            fetching, approxPolyAccuracy, pointsReceived, mode, portals, convertMasksToPolygons, persistentBox,
+            fetching, approxPolyAccuracy, pointsReceived, mode, portals, convertMasksToPolygons, persistentBox, imageMaxX, imageMaxY,
         } = this.state;
 
         if (![...interactors, ...detectors, ...trackers].length) return null;
@@ -1688,41 +1695,39 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                 // CSS left/top do the "pan"
                 const offsetX = parseFloat(computed.left);
                 const offsetY = parseFloat(computed.top);
-                // CSS transform is like "scale(0.1728) rotate(0deg)" or "matrix(a,b,c,d,e,f)"
-                const transform = computed.transform;
 
-                // 3) Extract the scale factor
-                let scale = 1;
-                if (transform.startsWith('matrix(')) {
-                    // matrix(a, b, c, d, e, f): a = scaleX, d = scaleY
-                    const nums = transform
-                    .slice(7, -1)
-                    .split(',')
-                    .map((v) => parseFloat(v));
-                    scale = nums[0]; // assume uniform scale
-                } else if (transform.startsWith('scale(')) {
-                    scale = parseFloat(transform.slice(6, -1).split(',')[0]);
-                }
-
-                console.log('scale', scale);
+                console.log('---------')
+                console.log('x1:', x1);
+                console.log('y1:', y1);
+                console.log('x2:', x2);
+                console.log('y2:', y2);
+                console.log('computed', computed);
                 console.log('offsetX', offsetX);
                 console.log('offsetY', offsetY);
+                console.log('transformOrigin', computed.transformOrigin);
+                const transformOriginX = parseFloat(computed.transformOrigin.split(' ')[0]);
+                const transformOriginY = parseFloat(computed.transformOrigin.split(' ')[1]);
+
+                // Get size of the SVG element
+                const svgWidth = svg.clientWidth;
+                const svgHeight = svg.clientHeight;
+                console.log('svgWidth', svgWidth);
+                console.log('svgHeight', svgHeight);
+
+                console.log('imageMaxX', imageMaxX);
+                console.log('imageMaxY', imageMaxY);
+
+                const deltaX = (svgWidth - imageMaxX) / 2;
+                const deltaY = (svgHeight - imageMaxY) / 2;
 
                 // 4) Apply pan+zoom to both corners
-                let sx1 = x1 * scale - offsetX;
-                let sy1 = y1 * scale - offsetY;
-                let sx2 = x2 * scale - offsetX;
-                let sy2 = y2 * scale - offsetY;
+                let sx1 = x1 + deltaX;
+                let sy1 = y1 + deltaY;
+                let sx2 = x2 + deltaX;
+                let sy2 = y2 + deltaY;
 
-                console.log('new BB', sx1, sy1, sx2, sy2);
-                console.log('previous BB', x1, y1, x2, y2);
-
-                // // return values to original, override the values of sx1, sy1, sx2, sy2
-                // sx1 = x1;
-                // sy1 = y1;
-                // sx2 = x2;
-                // sy2 = y2;
-                // console.log('new BB', sx1, sy1, sx2, sy2);
+                console.log('sx BB', sx1, sy1, sx2, sy2);
+                console.log('---------')
 
                 // 5) Compute the portal rect in SVG‐user‐space,
                 //    which will then be itself transformed+positioned by the CSS above.
