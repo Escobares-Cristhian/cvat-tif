@@ -55,7 +55,7 @@ import ToolsTooltips from './interactor-tooltips';
 
 
 // Default crop‐window size (must match one of your dropdown options)
-let WINDOW_SIZE = 1024;
+let WINDOW_SIZE: number | 'full' = 1024;
 
 interface StateToProps {
     canvasInstance: Canvas;
@@ -156,7 +156,7 @@ interface State {
     approxPolyAccuracy: number;
     mode: 'detection' | 'interaction' | 'tracking';
     portals: React.ReactPortal[];
-    windowSize: number;
+    windowSize: number | 'full';
     persistentBox: [number, number, number, number] | null;
     imageMaxX: number;
     imageMaxY: number;
@@ -546,19 +546,25 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                 const cx = (minX + maxX) / 2;
                 const cy = (minY + maxY) / 2;
 
-                // build 1024×1024 around (cx,cy)
-                const boxSize = WINDOW_SIZE;
-                const half = boxSize / 2;
-                let x1 = Math.floor(cx - half), y1 = Math.floor(cy - half);
-                let x2 = x1 + boxSize,  y2 = y1 + boxSize;
+                let newBB: [number,number,number,number];
+                if (WINDOW_SIZE === 'full') {
+                    // full‐image: just cover the whole frame
+                    newBB = [0, 0, image_maxX, image_maxY];
+                } else {
+                    // build 1024×1024 around (cx,cy)
+                    const boxSize = WINDOW_SIZE;
+                    const half = boxSize / 2;
+                    let x1 = Math.floor(cx - half), y1 = Math.floor(cy - half);
+                    let x2 = x1 + boxSize,  y2 = y1 + boxSize;
 
-                // clamp to image
-                if (x1 < 0)               { x1 = 0;        x2 = boxSize;       }
-                else if (x2 > image_maxX) { x2 = image_maxX; x1 = image_maxX - boxSize; }
-                if (y1 < 0)               { y1 = 0;        y2 = boxSize;       }
-                else if (y2 > image_maxY) { y2 = image_maxY; y1 = image_maxY - boxSize; }
+                    // clamp to image
+                    if (x1 < 0)               { x1 = 0;        x2 = boxSize;       }
+                    else if (x2 > image_maxX) { x2 = image_maxX; x1 = image_maxX - boxSize; }
+                    if (y1 < 0)               { y1 = 0;        y2 = boxSize;       }
+                    else if (y2 > image_maxY) { y2 = image_maxY; y1 = image_maxY - boxSize; }
 
-                const newBB: [number,number,number,number] = [x1, y1, x2, y2];
+                    newBB = [x1, y1, x2, y2];
+                }
                 const curBB = this.interaction.currentBoundingBox;
 
                 // 4) If outside, restart entire session
@@ -1303,30 +1309,42 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                     )}
 
                     <div style={{ marginTop: '8px' }}>
-                    <Text className='cvat-text-color'>Window size</Text>
-                    <Select
-                        style={{ width: '100%', marginTop: '4px' }}
-                        defaultValue={WINDOW_SIZE}
-                        onChange={(value: number) => {
-                        // 1) update your global and component state
-                        WINDOW_SIZE = value;          // save into your global var
-                        this.setState({ windowSize: value }, () => {
-                                // 2) clear the old bounding-box so we don’t reuse it
-                                (window as any).samLastBoundingBox = null;
-                                // 3) tell SAM to re-init with the new window size
-                                if (typeof (window as any).resetSamPlugin === 'function') {
-                                    (window as any).resetSamPlugin();
-                                }
-                            });
-                        }}
-                    >
-                        {[256, 512, 1024, 2048, 3072, 4096, 5120].map((sz) => (
-                        <Select.Option key={sz} value={sz}>
-                            {`${sz} (×${sz / 1024})`}
-                        </Select.Option>
-                        ))}
-                    </Select>
+                        <Text className='cvat-text-color'>Window size</Text>
+                        <Select<number | 'full'>
+                            style={{ width: '100%', marginTop: '4px' }}
+                            // switch to a controlled select so that “Full image” can be selected
+                            value={this.state.windowSize}
+                            onChange={(value: number | 'full') => {
+                                // decide on a new numeric windowSize
+                                const newSize = value === 'full'
+                                    ? 'full'
+                                    : (value as number);
+
+                                // update your global and local state
+                                WINDOW_SIZE = newSize;
+                                this.setState({ windowSize: newSize }, () => {
+                                    // clear the old bounding‐box so we don’t reuse it
+                                    (window as any).samLastBoundingBox = null;
+                                    // tell SAM to re‐init with the new window size
+                                    if (typeof (window as any).resetSamPlugin === 'function') {
+                                        (window as any).resetSamPlugin();
+                                    }
+                                });
+                            }}
+                        >
+                            {/* the existing sizes */}
+                            {[256, 512, 1024, 2048, 3072, 4096, 5120].map((sz) => (
+                                <Select.Option key={sz} value={sz}>
+                                    {`${sz} (×${sz / 1024})`}
+                                </Select.Option>
+                            ))}
+                            {/* new “Full image” option */}
+                            <Select.Option key='full' value='full'>
+                                Full image
+                            </Select.Option>
+                        </Select>
                     </div>
+
                 </div>
                 <Row align='middle' justify='end'>
                     <Col>
