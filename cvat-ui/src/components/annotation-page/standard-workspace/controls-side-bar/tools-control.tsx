@@ -54,12 +54,8 @@ import withVisibilityHandling from './handle-popover-visibility';
 import ToolsTooltips from './interactor-tooltips';
 
 
-
-
 // Default crop‐window size (must match one of your dropdown options)
 let WINDOW_SIZE = 1024;
-
-// interface Point { x: number; y: number; }
 
 interface StateToProps {
     canvasInstance: Canvas;
@@ -486,7 +482,7 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
         // recover the last BB if we're just starting a fresh object
         if (this.interaction.currentBoundingBox == null && (window as any).samLastBoundingBox) {
             this.interaction.currentBoundingBox = (window as any).samLastBoundingBox;
-            console.log('tools-control.tsx: onInteraction → recovered BB:', this.interaction.currentBoundingBox);
+            // console.log('tools-control.tsx: onInteraction → recovered BB:', this.interaction.currentBoundingBox);
         }
 
         const { activeInteractor } = this.state;
@@ -503,7 +499,7 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
             if (this.interaction.lastestApproximatedPoints.length) {
                 this.constructFromPoints();
             }
-            console.log('---------- END OF OBJECT INTERACTION ----------')
+            // console.log('---------- END OF OBJECT INTERACTION ----------')
         }
 
         if (!shapesUpdated) return;
@@ -567,12 +563,12 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
 
                 // 4) If outside, restart entire session
                 // The following if is currBB is not undefined
-                console.log('Check if statement, cx:', cx, 'cy:', cy, 'curBB:', curBB);
-                // console.log('Check if statement, cx < curBB[0]:', cx < curBB[0]);
-                // console.log('Check if statement, cx > curBB[2]:', cx > curBB[2]);
-                // console.log('Check if statement, cy < curBB[1]:', cy < curBB[1]);
-                // console.log('Check if statement, cy > curBB[3]:', cy > curBB[3]);
-                // console.log('Check if statement, curBB &&(lastX < curBB[0] || lastX > curBB[2] || lastY < curBB[1] || lastY > curBB[3]):', curBB && (lastX < curBB[0] || lastX > curBB[2] || lastY < curBB[1] || lastY > curBB[3]));
+                // console.log('Check if statement, cx:', cx, 'cy:', cy, 'curBB:', curBB);
+                // // console.log('Check if statement, cx < curBB[0]:', cx < curBB[0]);
+                // // console.log('Check if statement, cx > curBB[2]:', cx > curBB[2]);
+                // // console.log('Check if statement, cy < curBB[1]:', cy < curBB[1]);
+                // // console.log('Check if statement, cy > curBB[3]:', cy > curBB[3]);
+                // // console.log('Check if statement, curBB &&(lastX < curBB[0] || lastX > curBB[2] || lastY < curBB[1] || lastY > curBB[3]):', curBB && (lastX < curBB[0] || lastX > curBB[2] || lastY < curBB[1] || lastY > curBB[3]));
                 if (curBB && (lastX < curBB[0] || lastX > curBB[2] || lastY < curBB[1] || lastY > curBB[3])) {
                     this.interaction.currentBoundingBox = newBB;
                     // persist for next object’s first click
@@ -581,7 +577,7 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                     // draw the new red box.
                     this.setState({ persistentBox: newBB });
 
-                    console.log('✖️ Click outside BB → restarting interactor. newBB:', newBB);
+                    // console.log('✖️ Click outside BB → restarting interactor. newBB:', newBB);
 
                     // — before resetting SAM, stash your clicks —
                     const savedPosPoints = convertShapesForInteractor(shapes, 'points', 0) || [];
@@ -589,7 +585,7 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
 
                     // **reset** the SAM plugin itself
                     if (typeof (window as any).resetSamPlugin === 'function') {
-                        console.log('🔄 tools-control: calling resetSamPlugin()');
+                        // console.log('🔄 tools-control: calling resetSamPlugin()');
                         (window as any).resetSamPlugin();
                     } else {
                         console.warn('💢 tools-control: resetSamPlugin() is undefined!');
@@ -667,24 +663,6 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                 console.error('Error retrieving frame dimensions:', error);
             });
     };
-
-    // helper to keep the “old” logic DRY
-    private sendAccumulatedRequest(interactor: MLModel, frame: number, shapes: number[][]): void {
-        const pos = convertShapesForInteractor(shapes, 'points', 0);
-        const neg = convertShapesForInteractor(shapes, 'points', 2);
-        this.interaction.latestRequest = {
-            interactor,
-            data: {
-                frame,
-                obj_bbox: convertShapesForInteractor(shapes, 'rectangle', 0),
-                pos_points: pos,
-                neg_points: neg,
-                curBB: this.interaction.currentBoundingBox,
-            },
-        };
-        this.runInteractionRequest(this.interaction.id as string);
-    }
-
 
     private onTracking = async (e: Event): Promise<void> => {
         const { trackedShapes, activeTracker, activeLabelID } = this.state;
@@ -1702,22 +1680,11 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
             // 1) Unpack your raw image coords:
             const [x1, y1, x2, y2] = persistentBox;
 
-            console.log('---------')
-            console.log('x1:', x1);
-            console.log('y1:', y1);
-            console.log('x2:', x2);
-            console.log('y2:', y2);
-
             // 2) Get size of the SVG element
             const svgWidth = svg.clientWidth;
             const svgHeight = svg.clientHeight;
-            console.log('svgWidth', svgWidth);
-            console.log('svgHeight', svgHeight);
 
             // 3) Get size of the image element
-            console.log('imageMaxX', imageMaxX);
-            console.log('imageMaxY', imageMaxY);
-
             // 3.1) Calculate offset of the image element
             const deltaX = (svgWidth - imageMaxX) / 2;
             const deltaY = (svgHeight - imageMaxY) / 2;
@@ -1733,9 +1700,6 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
             let sy1 = y1 + deltaY + offsetYmin;
             let sx2 = x2 + deltaX + offsetXmax;
             let sy2 = y2 + deltaY + offsetYmax;
-
-            console.log('sx BB', sx1, sy1, sx2, sy2);
-            console.log('---------')
 
             // 5) Compute the portal rect in SVG‐user‐space,
             //    which will then be itself transformed+positioned by the CSS above.
