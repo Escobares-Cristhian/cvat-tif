@@ -536,20 +536,33 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                     return;
                 }
 
-                // 3) compute new 1024×1024 box around last click
-                const [cx, cy] = posPoints[posPoints.length - 1];
+                // 3) compute new 1024×1024 box around the CENTER of all positive clicks,
+                //    but use the raw last click for the outside‐BB check
+                const [lastX, lastY] = posPoints[posPoints.length - 1];
+
+                // get bbox of all positive points
+                const xs = posPoints.map(([x, _]) => x);
+                const ys = posPoints.map(([_, y]) => y);
+                const minX = Math.min(...xs), maxX = Math.max(...xs);
+                const minY = Math.min(...ys), maxY = Math.max(...ys);
+
+                // center of that bbox
+                const cx = (minX + maxX) / 2;
+                const cy = (minY + maxY) / 2;
+
+                // build 1024×1024 around (cx,cy)
                 const boxSize = WINDOW_SIZE;
                 const half = boxSize / 2;
                 let x1 = Math.floor(cx - half), y1 = Math.floor(cy - half);
-                let x2 = x1 + boxSize, y2 = y1 + boxSize;
+                let x2 = x1 + boxSize,  y2 = y1 + boxSize;
 
-                // clamp to [0..image_max]
-                if (x1 < 0) { x1 = 0; x2 = boxSize; }
+                // clamp to image
+                if (x1 < 0)               { x1 = 0;        x2 = boxSize;       }
                 else if (x2 > image_maxX) { x2 = image_maxX; x1 = image_maxX - boxSize; }
-                if (y1 < 0) { y1 = 0; y2 = boxSize; }
+                if (y1 < 0)               { y1 = 0;        y2 = boxSize;       }
                 else if (y2 > image_maxY) { y2 = image_maxY; y1 = image_maxY - boxSize; }
 
-                const newBB: [number, number, number, number] = [x1, y1, x2, y2];
+                const newBB: [number,number,number,number] = [x1, y1, x2, y2];
                 const curBB = this.interaction.currentBoundingBox;
 
                 // 4) If outside, restart entire session
@@ -559,8 +572,8 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                 // console.log('Check if statement, cx > curBB[2]:', cx > curBB[2]);
                 // console.log('Check if statement, cy < curBB[1]:', cy < curBB[1]);
                 // console.log('Check if statement, cy > curBB[3]:', cy > curBB[3]);
-                console.log('Check if statement, curBB &&(cx < curBB[0] || cx > curBB[2] || cy < curBB[1] || cy > curBB[3]):', curBB && (cx < curBB[0] || cx > curBB[2] || cy < curBB[1] || cy > curBB[3]));
-                if (curBB && (cx < curBB[0] || cx > curBB[2] || cy < curBB[1] || cy > curBB[3])) {
+                // console.log('Check if statement, curBB &&(lastX < curBB[0] || lastX > curBB[2] || lastY < curBB[1] || lastY > curBB[3]):', curBB && (lastX < curBB[0] || lastX > curBB[2] || lastY < curBB[1] || lastY > curBB[3]));
+                if (curBB && (lastX < curBB[0] || lastX > curBB[2] || lastY < curBB[1] || lastY > curBB[3])) {
                     this.interaction.currentBoundingBox = newBB;
                     // persist for next object’s first click
                     (window as any).samLastBoundingBox = newBB;
