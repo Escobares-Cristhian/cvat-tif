@@ -1,0 +1,120 @@
+# Copyright (C) 2025 Your Org
+# SPDX-License-Identifier: MIT
+
+metadata:
+  name: langrs-detector
+  namespace: cvat
+  annotations:
+    name: LangRS Detector
+    version: "1"
+    type: detector
+    help_message: >
+      Detect objects in remote‐sensing imagery using a text prompt
+      and the LangRS sliding‐window segmentation model.
+    spec: |
+      [
+        { "id": 1, "name": "object", "attributes": [] }
+      ]
+
+spec:
+  description: Text‐prompted segmentation detector using LangRS
+  runtime: 'python:3.8'
+  handler: main:handler
+  eventTimeout: 1200s
+
+  env:
+    - name: PYTHONPATH
+      value: /opt/nuclio/langrs
+
+  build:
+    image: cvat.pytorch.langrs-detector:latest-gpu
+    baseImage: ubuntu:22.04
+
+    directives:
+      preCopy:
+        # expose GPU to the container
+        - kind: ENV
+          value: NVIDIA_VISIBLE_DEVICES=all
+        - kind: ENV
+          value: NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+        # disable prompts during apt installs
+        - kind: ENV
+          value: DEBIAN_FRONTEND=noninteractive
+
+        # set working directory
+        - kind: WORKDIR
+          value: /opt/nuclio/langrs
+
+        # install system dependencies (Python, pip, OpenCV libs, etc.)
+        - kind: RUN
+          value: |
+            apt-get update && \
+            apt-get install -y \
+              curl \
+              git \
+              python3 \
+              python3-pip \
+              python-is-python3 \
+              ffmpeg \
+              libsm6 \
+              libxext6 \
+              libgl1-mesa-glx \
+              libglib2.0-0 && \
+            rm -rf /var/lib/apt/lists/*
+
+        # ensure 'python' and 'pip' point to Python 3
+        - kind: RUN
+          value: |
+            ln -sf /usr/bin/python3 /usr/bin/python && \
+            ln -sf /usr/bin/pip3   /usr/bin/pip
+
+        # upgrade pip
+        - kind: RUN
+          value: pip install --upgrade pip
+
+        # install PyTorch with CUDA support (adjust cuXX as needed)
+        - kind: RUN
+          value: |
+            pip install \
+              torch torchvision torchaudio \
+              --index-url https://download.pytorch.org/whl/cu118
+
+        # install LangRS and its Python deps
+        - kind: RUN
+          value: |
+            pip install \
+              git+https://github.com/MohanadDiab/langrs.git@main \
+              opencv-python-headless \
+              numpy
+        # install Hugging Face Hub and its Python deps
+        - kind: RUN
+          value: |
+            pip install huggingface_hub[hf_xet]
+                # download SAM weights **once** at build time
+        # download SAM weights **once** at build time
+        - kind: RUN
+          value: |
+            curl -L \
+              https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth \
+              -o /opt/nuclio/langrs/sam_vit_h_4b8939.pth
+
+  triggers:
+    httpTrigger:
+      kind: http
+      maxWorkers: 4
+      workerAvailabilityTimeoutMilliseconds: 30000
+      attributes:
+        contextPath: /
+        maxRequestBodySize: 1048576000  # 1000 MB
+
+  resources:
+    limits:
+      nvidia.com/gpu: 1
+
+  platform:
+    attributes:
+      restartPolicy:
+        name: always
+        maximumRetryCount: 3
+      mountMode: volume

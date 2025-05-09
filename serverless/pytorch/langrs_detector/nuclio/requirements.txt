@@ -1,0 +1,5 @@
+git+https://github.com/MohanadDiab/langrs.git@main
+numpy
+torch>=1.10
+opencv-python-headless
+huggingface_hub[hf_xet]

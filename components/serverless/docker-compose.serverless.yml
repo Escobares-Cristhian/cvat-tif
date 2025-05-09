@@ -24,9 +24,12 @@ services:
   cvat_server:
     environment:
       CVAT_SERVERLESS: 1
+      CVAT_NUCLIO_DEFAULT_TIMEOUT: 600   # wait up to 600 seconds (10 min)
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
   cvat_worker_annotation:
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    environment:
+      CVAT_NUCLIO_DEFAULT_TIMEOUT: 600 # wait up to 600 seconds (10 min)
