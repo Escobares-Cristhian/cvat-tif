@@ -3,7 +3,7 @@ import numpy as np
 from langrs import LangRS as _OrigLangRS
 from skimage.measure import find_contours, approximate_polygon
 
-MASK_THRESHOLD = 0.95
+MASK_THRESHOLD = 0.5
 
 # 1) Monkey-patch para LangRS
 class LangRS(_OrigLangRS):
@@ -96,8 +96,7 @@ class ModelHandler:
         model = LangRS(np.array(image), prompt, output_path="/tmp", checkpoint=self.checkpoint)
         boxes = model.generate_boxes(window_size=1000, overlap=200,
                                      box_threshold=MASK_THRESHOLD, text_threshold=MASK_THRESHOLD)
-        # filtered_boxes = model.outlier_rejection().get("zscore", boxes)
-        filtered_boxes = model.outlier_rejection('zscore')
+        filtered_boxes = model.outlier_rejection().get("zscore", boxes)
 
         # 4) DEBUG: devuelvo boxes como tipo rectangle
         results = []
