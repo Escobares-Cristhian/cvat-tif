@@ -3,6 +3,8 @@ import numpy as np
 from langrs import LangRS as _OrigLangRS
 from skimage.measure import find_contours, approximate_polygon
 
+import matplotlib.pyplot as plt
+
 MASK_THRESHOLD = 0.5
 
 # 1) Monkey-patch para LangRS
@@ -98,20 +100,41 @@ class ModelHandler:
                                      box_threshold=MASK_THRESHOLD, text_threshold=MASK_THRESHOLD)
         filtered_boxes = model.outlier_rejection().get("zscore", boxes)
 
-        # 4) DEBUG: devuelvo boxes como tipo rectangle
-        results = []
-        for box in filtered_boxes:
-            xmin, ymin, xmax, ymax = map(int, box)
-            results.append({
-                "label":      prompt,
-                "confidence": str(1.0),
-                "type":       "rectangle",   # tipo “rectangle” :contentReference[oaicite:5]{index=5}
-                "points":     [xmin, ymin, xmax, ymax],  # [xtl, ytl, xbr, ybr]
-                "attributes": []             # evita undefined.reduce :contentReference[oaicite:9]{index=9}
-            })
+        # 4) Generar máscaras *planas* (raw)
+        raw_masks = model.generate_masks(boxes=filtered_boxes, window_size=1024, overlap=200)
 
-        # # 4) Generar máscaras *planas* (raw)
-        # raw_masks = model.generate_masks(boxes=filtered_boxes)  # lista de arrays 1-D :contentReference[oaicite:6]{index=6}
+        print("\n\n")
+        print(f"DEBUG: scanning raw_masks")
+        print(f"\ttype(raw_masks): {type(raw_masks)}")
+        print(f"\tlen(raw_masks): {len(raw_masks)}")
+        print(f"\traw_masks.shape: {raw_masks.shape}")
+
+        # # 4) DEBUG: devuelvo boxes como tipo rectangle
+        # results = []
+        # for box in filtered_boxes:
+        #     xmin, ymin, xmax, ymax = map(int, box)
+        #     results.append({
+        #         "label":      prompt,
+        #         "confidence": str(1.0),
+        #         "type":       "rectangle",   # tipo “rectangle” :contentReference[oaicite:5]{index=5}
+        #         "points":     [xmin, ymin, xmax, ymax],  # [xtl, ytl, xbr, ybr]
+        #         "attributes": []             # evita undefined.reduce :contentReference[oaicite:9]{index=9}
+        #     })
+
+        results = []
+        # a) Codificar a RLE para CVAT
+        cvat_mask = to_cvat_mask(box, raw_masks)  # requiere máscara 2-D :contentReference[oaicite:7]{index=7}
+        # b) (Opcional) extraer contornos para polígonos
+        contour = find_contours(raw_masks, MASK_THRESHOLD)
+        contour = approximate_polygon(np.flip(contour[0], axis=1), tolerance=2.5)
+        results.append({
+            "label":      prompt,
+            "confidence": str(1.0),
+            "type":       "mask",       # tipo “mask” :contentReference[oaicite:8]{index=8}
+            "mask":       cvat_mask,    # RLE + [xtl, ytl, xbr, ybr]
+            "points":     contour.ravel().tolist(),
+            "attributes": []            # evita undefined.reduce :contentReference[oaicite:9]{index=9}
+        })
 
         # results = []
         # # 5) Emparejar con zip() para evitar unpack error
@@ -135,6 +158,7 @@ class ModelHandler:
         #         "points":     contour.ravel().tolist(),
         #         "attributes": []            # evita undefined.reduce :contentReference[oaicite:9]{index=9}
         #     })
+
 
         print("-"*80)
         print("-"*80)
