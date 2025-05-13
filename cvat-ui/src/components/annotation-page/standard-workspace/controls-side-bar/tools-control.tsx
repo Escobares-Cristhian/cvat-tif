@@ -22,6 +22,7 @@ import { Row, Col } from 'antd/lib/grid';
 import notification from 'antd/lib/notification';
 import message from 'antd/lib/message';
 import Switch from 'antd/lib/switch';
+import Input from 'antd/lib/input';
 import lodash, { omit } from 'lodash';
 
 import { AIToolsIcon } from 'icons';
@@ -160,6 +161,7 @@ interface State {
     persistentBox: [number, number, number, number] | null;
     imageMaxX: number;
     imageMaxY: number;
+    userTextInput: string;
 }
 
 type InteractorResults = Extract<Awaited<ReturnType<typeof core.lambda.call>>, { mask: number[][] }>;
@@ -261,6 +263,7 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
             persistentBox: null,
             imageMaxX: 0,
             imageMaxY: 0,
+            userTextInput: '',
         };
 
         this.interaction = {
@@ -1400,6 +1403,18 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
         }
 
         return (
+            <>
+            {/* ←– YOUR NEW TEXT INPUT */}
+            <Row style={{ marginBottom: '8px' }}>
+                <Col span={24}>
+                    <Text className='cvat-text-color'>Text for detection (if needed)</Text>
+                    <Input
+                        placeholder='Enter text...'
+                        value={this.state.userTextInput}
+                        onChange={e => this.setState({ userTextInput: e.target.value })}
+                    />
+                </Col>
+            </Row>
             <DetectorRunner
                 withCleanup={false}
                 models={detectors}
@@ -1467,9 +1482,18 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                         // The function call endpoint doesn't support the cleanup and convMaskToPoly parameters.
                         const { cleanup, convMaskToPoly, ...restOfBody } = body;
 
-                        const result = await core.lambda.call(jobInstance.taskId, model, {
-                            ...restOfBody, frame, job: jobInstance.id,
-                        }) as DetectedShapes;
+                        // build a single payload that includes your text
+                        const payload = {
+                            ...restOfBody,
+                            frame,
+                            job: jobInstance.id,
+                            userTextInput: this.state.userTextInput,
+                        };
+                        const result = await core.lambda.call(
+                            jobInstance.taskId,
+                            model,
+                            payload,
+                        ) as DetectedShapes;
 
                         const states = result.map(
                             (data): ObjectState | null => {
@@ -1584,7 +1608,8 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                         this.setState({ fetching: false });
                     }
                 }}
-            />
+                />
+            </>
         );
     }
 

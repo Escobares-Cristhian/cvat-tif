@@ -387,7 +387,8 @@ class LambdaFunction:
 
         if self.kind == FunctionKind.DETECTOR:
             payload.update({
-                "image": self._get_image(db_task, mandatory_arg("frame"), quality)
+                "image": self._get_image(db_task, mandatory_arg("frame"), quality),
+                "userTextInput": data.get("userTextInput", None),
             })
         elif self.kind == FunctionKind.INTERACTOR:
             payload.update({

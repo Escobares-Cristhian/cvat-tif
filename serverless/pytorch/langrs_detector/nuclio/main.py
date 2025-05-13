@@ -14,7 +14,37 @@ def handler(context, event):
     data = event.body
     buf = io.BytesIO(base64.b64decode(data["image"]))
     image = Image.open(buf).convert("RGB")
-    prompt = data.get("text") or data.get("label") or "Airplane"
+    print("event:")
+    print(f"\ttype: {type(event)}")
+    print("keys:", list(vars(event).keys()))
+    # Print all attribute values except "body"
+    for key in vars(event).keys():
+        if key != "body":
+            print(f"\t{key}: {getattr(event, key)}")
+
+    print("context:")
+    print(f"\ttype: {type(context)}")
+    keys = list(vars(context).keys())
+    print("keys:", keys)
+    for key in keys:
+        print(f"\t{key}: {getattr(context, key)}")
+
+    print("data:")
+    print(f"\ttype: {type(data)}")
+    print("keys:", list(data.keys()))
+    # for key in data.keys():
+    #     print(f"\t{key}: {data[key]}")
+
+    prompt = data.get("userTextInput") or False
+    if not prompt:
+        return context.Response(
+            body=json.dumps({"error": "No prompt provided"}),
+            headers={},
+            content_type="application/json",
+            status_code=400,
+        )
+
+    print("prompt obtenido AUTO:", prompt)
 
     # Inicializar modelo con dimensiones reales
     image_size = (image.height, image.width)
