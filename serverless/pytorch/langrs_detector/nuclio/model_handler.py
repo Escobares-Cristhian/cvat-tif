@@ -7,6 +7,8 @@ import matplotlib.pyplot as plt
 
 MASK_THRESHOLD = 0.5
 IOU_THRESHOLD = 0.9
+WINDOW_SIZE = 500
+OVERLAP = 200
 
 # 1) Monkey-patch para LangRS
 class LangRS(_OrigLangRS):
@@ -86,10 +88,10 @@ class ModelHandler:
                 keep.append(b)
         return keep
 
-    def infer(self, image, prompt):
+    def infer(self, image, prompt, label):
         # 3) Generar y filtrar cajas
         model = LangRS(np.array(image), prompt, output_path="/tmp", checkpoint=self.checkpoint)
-        boxes = model.generate_boxes(window_size=1000, overlap=200,
+        boxes = model.generate_boxes(window_size=WINDOW_SIZE, overlap=OVERLAP,
                                      box_threshold=MASK_THRESHOLD, text_threshold=MASK_THRESHOLD)
         boxes = model.outlier_rejection().get("zscore", boxes)
 
@@ -108,7 +110,7 @@ class ModelHandler:
             contour = find_contours(raw_masks, MASK_THRESHOLD)
             contour = approximate_polygon(np.flip(contour[0], axis=1), tolerance=2.5)
             results.append({
-                "label":      prompt,
+                "label":      label,
                 "confidence": str(1.0),
                 "type":       "mask",       # tipo “mask” :contentReference[oaicite:8]{index=8}
                 "mask":       cvat_mask,    # RLE + [xtl, ytl, xbr, ybr]

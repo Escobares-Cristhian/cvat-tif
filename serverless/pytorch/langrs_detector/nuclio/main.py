@@ -14,27 +14,8 @@ def handler(context, event):
     data = event.body
     buf = io.BytesIO(base64.b64decode(data["image"]))
     image = Image.open(buf).convert("RGB")
-    print("event:")
-    print(f"\ttype: {type(event)}")
-    print("keys:", list(vars(event).keys()))
-    # Print all attribute values except "body"
-    for key in vars(event).keys():
-        if key != "body":
-            print(f"\t{key}: {getattr(event, key)}")
 
-    print("context:")
-    print(f"\ttype: {type(context)}")
-    keys = list(vars(context).keys())
-    print("keys:", keys)
-    for key in keys:
-        print(f"\t{key}: {getattr(context, key)}")
-
-    print("data:")
-    print(f"\ttype: {type(data)}")
-    print("keys:", list(data.keys()))
-    # for key in data.keys():
-    #     print(f"\t{key}: {data[key]}")
-
+    # Obtener input del usuario
     prompt = data.get("userTextInput") or False
     if not prompt:
         return context.Response(
@@ -46,12 +27,23 @@ def handler(context, event):
 
     print("prompt obtenido AUTO:", prompt)
 
+    # Obtener label de la imagen
+    label = data.get("cvatLabel") or False
+    if not label:
+        return context.Response(
+            body=json.dumps({"error": "No label provided"}),
+            headers={},
+            content_type="application/json",
+            status_code=400,
+        )
+    print("label obtenido CVAT:", label)
+
     # Inicializar modelo con dimensiones reales
     image_size = (image.height, image.width)
     model = ModelHandler(context.user_data.checkpoint, image_size)
     context.user_data.model = model
 
-    results = model.infer(image, prompt)
+    results = model.infer(image, prompt, label)
     return context.Response(
         body=json.dumps(results),
         headers={},

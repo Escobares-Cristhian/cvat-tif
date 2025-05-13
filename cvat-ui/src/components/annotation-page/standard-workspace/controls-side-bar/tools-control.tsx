@@ -1482,12 +1482,16 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                         // The function call endpoint doesn't support the cleanup and convMaskToPoly parameters.
                         const { cleanup, convMaskToPoly, ...restOfBody } = body;
 
+                        // Select the label that was passed in the request body
+                        const selected = labels.find((l: Label) => l.id === this.state.activeLabelID);
+
                         // build a single payload that includes your text
                         const payload = {
                             ...restOfBody,
                             frame,
                             job: jobInstance.id,
                             userTextInput: this.state.userTextInput,
+                            cvatLabel: selected?.name,
                         };
                         const result = await core.lambda.call(
                             jobInstance.taskId,
