@@ -28,7 +28,7 @@ import lodash, { omit } from 'lodash';
 import { AIToolsIcon } from 'icons';
 import { Canvas, convertShapesForInteractor } from 'cvat-canvas-wrapper';
 import {
-    getCore, Label, MLModel, ObjectState, Job,
+    getCore, Attribute, Label, MLModel, ObjectState, Job,
     LabelType,
 } from 'cvat-core-wrapper';
 import openCVWrapper, { MatType } from 'utils/opencv-wrapper/opencv-wrapper';
@@ -1428,6 +1428,10 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                         return attributes.reduce((acc, { name, value }) => {
                             const attributeSpec = label.attributes.find((_attr) => _attr.name === name);
 
+                            this.state.attributeSpec = attributeSpec;
+
+                            console.log('attributeSpec:', attributeSpec);
+
                             if (!attributeSpec) {
                                 return acc;
                             }
@@ -1480,10 +1484,13 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                         this.setState({ mode: 'detection', fetching: true });
 
                         // The function call endpoint doesn't support the cleanup and convMaskToPoly parameters.
-                        const { cleanup, convMaskToPoly, ...restOfBody } = body;
+                        const { mapping, cleanup, convMaskToPoly, ...restOfBody } = body;
 
-                        // Select the label that was passed in the request body
-                        const selected = labels.find((l: Label) => l.id === this.state.activeLabelID);
+                        // Only care about the first (or only) mapping:
+                        const [[, { name: cvatLabelName }]] = Object.entries(mapping);
+                        // Find the actual Label object in the task’s labels array:
+                        const cvatLabel = labels.find((l: Label) => l.name === cvatLabelName);
+
 
                         // build a single payload that includes your text
                         const payload = {
@@ -1491,7 +1498,7 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                             frame,
                             job: jobInstance.id,
                             userTextInput: this.state.userTextInput,
-                            cvatLabel: selected?.name,
+                            cvatLabel: cvatLabel.name,
                         };
                         const result = await core.lambda.call(
                             jobInstance.taskId,
