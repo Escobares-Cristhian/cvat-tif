@@ -28,7 +28,7 @@ import lodash, { omit } from 'lodash';
 import { AIToolsIcon } from 'icons';
 import { Canvas, convertShapesForInteractor } from 'cvat-canvas-wrapper';
 import {
-    getCore, Attribute, Label, MLModel, ObjectState, Job,
+    getCore, Label, MLModel, ObjectState, Job,
     LabelType,
 } from 'cvat-core-wrapper';
 import openCVWrapper, { MatType } from 'utils/opencv-wrapper/opencv-wrapper';
@@ -534,6 +534,12 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                     this.runInteractionRequest(this.interaction.id as string);
                     return;
                 }
+
+               // only apply the fixed-size (1024×1024) crop if we actually have an interactor
+               if (!activeInteractor) {
+                   // no interactor selected → skip window cropping completely
+                   return;
+               }
 
                 // 3) compute new 1024×1024 box around the CENTER of all positive clicks,
                 //    but use the raw last click for the outside‐BB check
