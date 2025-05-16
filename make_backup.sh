@@ -7,7 +7,7 @@ SECONDS=0
 # 1. Ensure backup folder is provided
 if [ $# -lt 1 ]; then
   echo "Usage: $0 <path_to_backup_folder>" >&2
-  echo "Standard folder for Satellogic WS03: /Nas/cvat_data_storage"
+  echo "Standard folder for Satellogic WS03: /Nas/cvat_data_storage/manual_backup"
   exit 1
 fi
 
@@ -16,7 +16,7 @@ BACKUP_DIR="$1"
 # 2. Validate that it exists and is a directory
 if [ ! -d "$BACKUP_DIR" ]; then
   echo "Error: Backup folder not found or not a directory: $BACKUP_DIR" >&2
-  echo "Standard folder for Satellogic WS03: /Nas/cvat_data_storage"
+  echo "Standard folder for Satellogic WS03: /Nas/cvat_data_storage/manual_backup"
   exit 1
 fi
 
