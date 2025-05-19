@@ -40,7 +40,7 @@ services:
       POSTGRES_DB: cvat
       POSTGRES_HOST_AUTH_METHOD: trust
     volumes:
-      - cvat_db:/var/lib/postgresql/data
+      - /Nas/cvat_data_storage/current_storage/cvat_db:/var/lib/postgresql/data
     networks:
       - cvat
 
@@ -102,9 +102,9 @@ services:
         PathPrefix(`/api/`, `/static/`, `/admin`, `/documentation/`, `/django-rq`)
       - traefik.http.routers.cvat.entrypoints=web
     volumes:
-      - cvat_data:/home/django/data
-      - cvat_keys:/home/django/keys
-      - cvat_logs:/home/django/logs
+      - /Nas/cvat_data_storage/current_storage/cvat_data:/home/django/data
+      - /Nas/cvat_data_storage/current_storage/cvat_keys:/home/django/keys
+      - /Nas/cvat_data_storage/current_storage/cvat_logs:/home/django/logs
     networks:
       cvat:
         aliases:
@@ -121,9 +121,9 @@ services:
       NUMPROCS: 1
     command: run utils
     volumes:
-      - cvat_data:/home/django/data
-      - cvat_keys:/home/django/keys
-      - cvat_logs:/home/django/logs
+      - /Nas/cvat_data_storage/current_storage/cvat_data:/home/django/data
+      - /Nas/cvat_data_storage/current_storage/cvat_keys:/home/django/keys
+      - /Nas/cvat_data_storage/current_storage/cvat_logs:/home/django/logs
     networks:
       - cvat
 
@@ -137,9 +137,9 @@ services:
       NUMPROCS: 2
     command: run worker.import
     volumes:
-      - cvat_data:/home/django/data
-      - cvat_keys:/home/django/keys
-      - cvat_logs:/home/django/logs
+      - /Nas/cvat_data_storage/current_storage/cvat_data:/home/django/data
+      - /Nas/cvat_data_storage/current_storage/cvat_keys:/home/django/keys
+      - /Nas/cvat_data_storage/current_storage/cvat_logs:/home/django/logs
     networks:
       - cvat
 
@@ -153,9 +153,9 @@ services:
       NUMPROCS: 2
     command: run worker.export
     volumes:
-      - cvat_data:/home/django/data
-      - cvat_keys:/home/django/keys
-      - cvat_logs:/home/django/logs
+      - /Nas/cvat_data_storage/current_storage/cvat_data:/home/django/data
+      - /Nas/cvat_data_storage/current_storage/cvat_keys:/home/django/keys
+      - /Nas/cvat_data_storage/current_storage/cvat_logs:/home/django/logs
     networks:
       - cvat
 
@@ -169,9 +169,9 @@ services:
       NUMPROCS: 1
     command: run worker.annotation
     volumes:
-      - cvat_data:/home/django/data
-      - cvat_keys:/home/django/keys
-      - cvat_logs:/home/django/logs
+      - /Nas/cvat_data_storage/current_storage/cvat_data:/home/django/data
+      - /Nas/cvat_data_storage/current_storage/cvat_keys:/home/django/keys
+      - /Nas/cvat_data_storage/current_storage/cvat_logs:/home/django/logs
     networks:
       - cvat
 
@@ -185,9 +185,9 @@ services:
       NUMPROCS: 1
     command: run worker.webhooks
     volumes:
-      - cvat_data:/home/django/data
-      - cvat_keys:/home/django/keys
-      - cvat_logs:/home/django/logs
+      - /Nas/cvat_data_storage/current_storage/cvat_data:/home/django/data
+      - /Nas/cvat_data_storage/current_storage/cvat_keys:/home/django/keys
+      - /Nas/cvat_data_storage/current_storage/cvat_logs:/home/django/logs
     networks:
       - cvat
 
@@ -201,9 +201,9 @@ services:
       NUMPROCS: 1
     command: run worker.quality_reports
     volumes:
-      - cvat_data:/home/django/data
-      - cvat_keys:/home/django/keys
-      - cvat_logs:/home/django/logs
+      - /Nas/cvat_data_storage/current_storage/cvat_data:/home/django/data
+      - /Nas/cvat_data_storage/current_storage/cvat_keys:/home/django/keys
+      - /Nas/cvat_data_storage/current_storage/cvat_logs:/home/django/logs
     networks:
       - cvat
 
@@ -217,9 +217,9 @@ services:
       NUMPROCS: 2
     command: run worker.analytics_reports
     volumes:
-      - cvat_data:/home/django/data
-      - cvat_keys:/home/django/keys
-      - cvat_logs:/home/django/logs
+      - /Nas/cvat_data_storage/current_storage/cvat_data:/home/django/data
+      - /Nas/cvat_data_storage/current_storage/cvat_keys:/home/django/keys
+      - /Nas/cvat_data_storage/current_storage/cvat_logs:/home/django/logs
     networks:
       - cvat
 
@@ -309,7 +309,7 @@ services:
           - clickhouse
     volumes:
       - ./components/analytics/clickhouse/init.sh:/docker-entrypoint-initdb.d/init.sh:ro
-      - cvat_events_db:/var/lib/clickhouse/
+      - /Nas/cvat_data_storage/current_storage/cvat_clickhouse:/var/lib/clickhouse/
 
   cvat_vector:
     container_name: cvat_vector
@@ -382,13 +382,13 @@ services:
           - grafana
 
 volumes:
-  cvat_db:
-  cvat_data:
-  cvat_keys:
-  cvat_logs:
-  cvat_inmem_db:
-  cvat_events_db:
-  cvat_cache_db:
+  # cvat_db:          # Commented because it is bind-mounted
+  # cvat_data:        # Commented because it is bind-mounted
+  # cvat_keys:        # Commented because it is bind-mounted
+  # cvat_logs:        # Commented because it is bind-mounted
+  cvat_inmem_db:      # Volatile data, not bind-mounted
+  # cvat_events_db:   # Commented because it is bind-mounted
+  cvat_cache_db:      # Volatile data, not bind-mounted
 
 networks:
   cvat:

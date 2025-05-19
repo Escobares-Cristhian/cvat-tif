@@ -28,6 +28,8 @@ docker compose stop
 echo "Backup databases and data from Docker containers..."
 docker run --rm --name temp_backup_db --volumes-from cvat_db -v "$BACKUP_DIR":/backup ubuntu tar -czvf /backup/cvat_db.tar.gz /var/lib/postgresql/data
 docker run --rm --name temp_backup_cvat --volumes-from cvat_server -v "$BACKUP_DIR":/backup ubuntu tar -czvf /backup/cvat_data.tar.gz /home/django/data
+docker run --rm --name temp_backup_keys --volumes-from cvat_keys -v "$BACKUP_DIR":/backup ubuntu tar -czvf /backup/cvat_keys.tar.gz /home/django/keys
+docker run --rm --name temp_backup_logs --volumes-from cvat_logs -v "$BACKUP_DIR":/backup ubuntu tar -czvf /backup/cvat_logs.tar.gz /home/django/logs
 docker run --rm --name temp_backup_clickhouse --volumes-from cvat_clickhouse -v "$BACKUP_DIR":/backup ubuntu tar -czvf /backup/cvat_events_db.tar.gz /var/lib/clickhouse
 
 # 5. Start the Docker containers
