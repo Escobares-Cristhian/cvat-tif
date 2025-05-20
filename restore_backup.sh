@@ -26,11 +26,9 @@ docker compose stop
 
 # 4. Restore databases and data
 echo "Restoring databases and data from Docker containers..."
-docker run --rm --name temp_backup_db --volumes-from cvat_db -v $BACKUP_DIR:/backup ubuntu bash -c "cd /var/lib/postgresql/data && tar -xvf /backup/cvat_db.tar.gz --strip 4"
-docker run --rm --name temp_backup_cvat --volumes-from cvat_server -v $BACKUP_DIR:/backup ubuntu bash -c "cd /home/django/data && tar -xvf /backup/cvat_data.tar.gz --strip 3"
-docker run --rm --name temp_backup_keys --volumes-from cvat_keys -v $BACKUP_DIR:/backup ubuntu bash -c "cd /home/django/keys && tar -xvf /backup/cvat_keys.tar.gz --strip 3"
-docker run --rm --name temp_backup_logs --volumes-from cvat_logs -v $BACKUP_DIR:/backup ubuntu bash -c "cd /home/django/logs && tar -xvf /backup/cvat_logs.tar.gz --strip 3"
-docker run --rm --name temp_backup_clickhouse --volumes-from cvat_clickhouse -v $BACKUP_DIR:/backup ubuntu bash -c "cd /var/lib/clickhouse && tar -xvf /backup/cvat_events_db.tar.gz --strip 3"
+docker run --rm --name temp_backup_db -v cvat-tif_cvat_db:/var/lib/postgresql/data -v $BACKUP_DIR:/backup ubuntu bash -c "cd /var/lib/postgresql/data && tar -xvf /backup/cvat_db.tar.gz --strip 4"
+docker run --rm --name temp_backup_cvat -v cvat-tif_cvat_server:/home/django/data -v $BACKUP_DIR:/backup ubuntu bash -c "cd /home/django/data && tar -xvf /backup/cvat_data.tar.gz --strip 3"
+docker run --rm --name temp_backup_clickhouse -v cvat-tif_cvat_events_db:/var/lib/clickhouse/ -v $BACKUP_DIR:/backup ubuntu bash -c "cd /var/lib/clickhouse && tar -xvf /backup/cvat_events_db.tar.gz --strip 3"
 
 # 5. Start the Docker containers
 echo "Starting Docker containers..."
