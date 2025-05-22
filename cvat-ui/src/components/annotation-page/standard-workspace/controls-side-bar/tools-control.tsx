@@ -1410,6 +1410,7 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
 
         return (
             <>
+            {/* ←– YOUR NEW TEXT INPUT */}
             <Row style={{ marginBottom: '8px' }}>
                 <Col span={24}>
                     <Text className='cvat-text-color'>Text for detection (if needed)</Text>
@@ -1488,10 +1489,10 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                     try {
                         this.setState({ mode: 'detection', fetching: true });
 
-                        // strip only the two we don’t support, leave everything else (including `mapping`) in restOfBody
+                        // The function call endpoint doesn't support the cleanup and convMaskToPoly parameters.
                         const { cleanup, convMaskToPoly, ...restOfBody } = body;
 
-                        // now grab the first mapping from restOfBody.mapping
+                        // Only care about the first (or only) mapping:
                         const [[, { name: cvatLabelName }]] = Object.entries(restOfBody.mapping);
                         // Find the actual Label object in the task’s labels array:
                         const cvatLabel = labels.find((l: Label) => l.name === cvatLabelName);
