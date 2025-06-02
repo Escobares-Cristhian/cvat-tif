@@ -31,9 +31,41 @@ docker compose stop
 
 # 4. Restore databases and data
 echo "Restoring databases and data from Docker containers..."
-docker run --rm --name temp_backup_db -v "$project"_cvat_db:/var/lib/postgresql/data -v $BACKUP_DIR:/backup ubuntu bash -c "cd /var/lib/postgresql/data && tar -xvf /backup/cvat_db.tar.gz --strip 4"
-docker run --rm --name temp_backup_cvat -v "$project"_cvat_server:/home/django/data -v $BACKUP_DIR:/backup ubuntu bash -c "cd /home/django/data && tar -xvf /backup/cvat_data.tar.gz --strip 3"
-docker run --rm --name temp_backup_clickhouse -v "$project"_cvat_events_db:/var/lib/clickhouse/ -v $BACKUP_DIR:/backup ubuntu bash -c "cd /var/lib/clickhouse && tar -xvf /backup/cvat_events_db.tar.gz --strip 3"
+
+# 4.1 PostgreSQL data
+docker run --rm --name temp_restore_db \
+  -v "${project}_cvat_db":/var/lib/postgresql/data \
+  -v "$BACKUP_DIR":/backup \
+  ubuntu \
+  bash -c "cd /var/lib/postgresql/data && tar -xvf /backup/cvat_db.tar.gz --strip 4"
+
+# 4.2 CVAT application data (images + annotations)
+docker run --rm --name temp_restore_cvat_data \
+  -v "${project}_cvat_data":/home/django/data \
+  -v "$BACKUP_DIR":/backup \
+  ubuntu \
+  bash -c "cd /home/django/data && tar -xvf /backup/cvat_data.tar.gz --strip 3"
+
+# 4.3 CVAT keys
+docker run --rm --name temp_restore_cvat_keys \
+  -v "${project}_cvat_keys":/home/django/keys \
+  -v "$BACKUP_DIR":/backup \
+  ubuntu \
+  bash -c "cd /home/django/keys && tar -xvf /backup/cvat_keys.tar.gz --strip 3"
+
+# 4.4 CVAT logs
+docker run --rm --name temp_restore_cvat_logs \
+  -v "${project}_cvat_logs":/home/django/logs \
+  -v "$BACKUP_DIR":/backup \
+  ubuntu \
+  bash -c "cd /home/django/logs && tar -xvf /backup/cvat_logs.tar.gz --strip 3"
+
+# 4.5 ClickHouse events database
+docker run --rm --name temp_restore_clickhouse \
+  -v "${project}_cvat_events_db":/var/lib/clickhouse \
+  -v "$BACKUP_DIR":/backup \
+  ubuntu \
+  bash -c "cd /var/lib/clickhouse && tar -xvf /backup/cvat_events_db.tar.gz --strip 3"
 
 # 5. Start the Docker containers
 echo "Starting Docker containers..."
