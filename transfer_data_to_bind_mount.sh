@@ -44,7 +44,7 @@ project="${COMPOSE_PROJECT_NAME:-$(basename "$PWD")}"
 # 4. Iterate over each and copy into your NAS path
 for vol in "${volumes[@]}"; do
   src="${project}_cvat_${vol}"               # e.g. "cvat-tif_cvat_db"
-  dst="${events_db}/cvat_${vol}"
+  dst="${main_dir}/cvat_${vol}"
   echo "Copying $src → $dst …"
 
   docker run --rm \
