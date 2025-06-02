@@ -1,0 +1,110 @@
+# Copyright (C) 2025 Your Org
+# SPDX-License-Identifier: MIT
+
+metadata:
+  name: sam2-detector
+  namespace: cvat
+  annotations:
+    name: SAM2 Detector
+    version: "2"
+    type: detector
+    help_message: >
+      Detect objects in remote‐sensing imagery using a text prompt
+      and the SAM 2 segmentation model.
+    spec: |
+      [
+        { "id": 1, "name": "object", "attributes": [] }
+      ]
+
+spec:
+  description: Text‐prompted segmentation detector using SAM 2
+  runtime: 'python:3.10'
+  handler: main:handler
+  eventTimeout: 1200s
+
+  env:
+    - name: PYTHONPATH
+      value: /opt/nuclio/sam2
+
+  build:
+    baseImage: ubuntu:22.04
+
+    directives:
+      preCopy:
+        # expose GPU
+        - kind: ENV
+          value: NVIDIA_VISIBLE_DEVICES=all
+        - kind: ENV
+          value: NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+        # disable apt prompts
+        - kind: ENV
+          value: DEBIAN_FRONTEND=noninteractive
+
+        # set working directory
+        - kind: WORKDIR
+          value: /opt/nuclio/sam2
+
+        # install pip3 so we can use pip
+        - kind: RUN
+          value: |
+            apt-get update && \
+            apt-get install -y python3-pip git curl && \
+            rm -rf /var/lib/apt/lists/*
+
+        # ensure python → python3
+        - kind: RUN
+          value: |
+            ln -sf /usr/bin/python3 /usr/bin/python && \
+            ln -sf /usr/bin/pip3   /usr/bin/pip
+
+        # upgrade pip
+        - kind: RUN
+          value: pip install --upgrade pip
+
+        # install PyTorch with CUDA support
+        - kind: RUN
+          value: |
+            pip install \
+              torch torchvision torchaudio \
+              --index-url https://download.pytorch.org/whl/cu118
+
+        # install SAM 2 and dependencies
+        - kind: RUN
+          value: |
+            pip install \
+              git+https://github.com/facebookresearch/sam2.git@main \
+              opencv-python-headless \
+              numpy\
+              scikit-image
+
+        # (Optional) Hugging Face Hub for from_pretrained methods
+        - kind: RUN
+          value: pip install huggingface_hub
+
+        # download SAM 2 weights once at build time
+        - kind: RUN
+          value: |
+            curl -L \
+              https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_large.pt \
+              -o /opt/nuclio/sam2/sam2_hiera_large.pt
+
+  triggers:
+    httpTrigger:
+      kind: http
+      maxWorkers: 4
+      workerAvailabilityTimeoutMilliseconds: 30000
+      attributes:
+        contextPath: /
+        maxRequestBodySize: 1048576000  # 1000 MB
+
+  resources:
+    limits:
+      nvidia.com/gpu: 1
+
+  platform:
+    attributes:
+      restartPolicy:
+        name: always
+        maximumRetryCount: 3
+      mountMode: volume
