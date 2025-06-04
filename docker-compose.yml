@@ -386,32 +386,32 @@ volumes:
     driver: local
     driver_opts:
       type: none
-      device: /share/cescobares/cvat_data_storage/current_storage/cvat_db
+      device: /scratch/cvat/current_storage/cvat_db
       o: bind
   cvat_data:
     driver: local
     driver_opts:
       type: none
-      device: /share/cescobares/cvat_data_storage/current_storage/cvat_data
+      device: /scratch/cvat/current_storage/cvat_data
       o: bind
   cvat_keys:
     driver: local
     driver_opts:
       type: none
-      device: /share/cescobares/cvat_data_storage/current_storage/cvat_keys
+      device: /scratch/cvat/current_storage/cvat_keys
       o: bind
   cvat_logs:
     driver: local
     driver_opts:
       type: none
-      device: /share/cescobares/cvat_data_storage/current_storage/cvat_logs
+      device: /scratch/cvat/current_storage/cvat_logs
       o: bind
   cvat_inmem_db:      # Volatile data, not bind-mounted
   cvat_events_db:
     driver: local
     driver_opts:
       type: none
-      device: /share/cescobares/cvat_data_storage/current_storage/cvat_events_db
+      device: /scratch/cvat/current_storage/cvat_events_db
       o: bind
   cvat_cache_db:      # Volatile data, not bind-mounted
 
