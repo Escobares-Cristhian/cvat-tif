@@ -1,20 +1,37 @@
 import numpy as np
 from sam2.build_sam import build_sam2
-from sam2.sam2_image_predictor import SAM2ImagePredictor
+from sam2.automatic_mask_generator import SAM2AutomaticMaskGenerator
 from skimage.measure import find_contours, approximate_polygon
+# from pycocotools import mask as maskUtils
 
 MASK_THRESHOLD = 0.5
+IOU_THRESHOLD = 0.99  # IoU threshold for NMS
 
 def to_cvat_mask(box, mask_2d):
     """
-    Crop the full‐image mask to the box, flatten and
-    append [xtl, ytl, xbr, ybr] for CVAT RLE.
+    box: [x0, y0, w, h]   (SAM2 is XYWH!)
+    mask_2d: full-image binary mask (0/1 numpy array)
+
+    returns: a flat List[int] of length (h*w + 4), where
+      - the first h*w entries are your mask bits in row-major
+      - the last four are [x0, y0, x1, y1] for CVAT to splice off
     """
-    xtl, ytl, xbr, ybr = map(int, box)
+    # 1) unpack and convert XYWH -> XYXY
+    xtl, ytl, w, h = map(int, box)
+    xbr, ybr = xtl + w, ytl + h
+
+    # Ensure numpy array and crop to the box region
+    if not isinstance(mask_2d, np.ndarray):
+        mask_2d = np.array(mask_2d)
     crop = mask_2d[ytl : ybr + 1, xtl : xbr + 1]
-    flat = crop.flatten().astype(int).tolist()
-    flat.extend([xtl, ytl, xbr, ybr])
-    return flat
+
+    # Flatten the mask pixels
+    mask_flat = crop.flat[:].tolist()
+
+    # Append the box coords at the very end (CVAT will read them from the tail)
+    mask_flat.extend([xtl, ytl, xbr, ybr])
+
+    return mask_flat
 
 class ModelHandler:
     def __init__(self, checkpoint: str, image_size: tuple):
@@ -25,40 +42,54 @@ class ModelHandler:
         self.image_h, self.image_w = image_size
         # Build the core SAM2 model
         model_cfg = "configs/sam2.1/sam2.1_hiera_l.yaml"
-        self.predictor = SAM2ImagePredictor(build_sam2(model_cfg, checkpoint))
-        # self.segmenter = Sam2Segmenter(checkpoint=checkpoint, device='cuda')
 
-    def infer(self, image, prompt: str, label: str):
+        self.mask_generator = SAM2AutomaticMaskGenerator(
+            build_sam2(model_cfg, checkpoint, device="cuda", apply_postprocessing=False),
+            points_per_side=64,           # finer grid → better boundary detail
+            pred_iou_thresh=0.90,         # stricter mask IoU filtering
+            stability_score_thresh=0.90,  # stricter stability filtering
+
+            # --- crop parameters ---
+            crop_n_layers=1,                   # run one extra layer of crops
+            crop_overlap_ratio=0.5,            # 50% overlap between tiles
+            crop_n_points_downscale_factor=2,  # downscale points by 2x in crops
+
+            # --- post‐processing ---
+            min_mask_region_area=5   # drop tiny speckles <5 px
+        )
+
+    def infer(self, image, label: str):
         img = np.array(image)
-        # feed the image
-        self.predictor.set_image(img)
-        # text prompt support depends on how you wrap it;
-        # here we pass a single‐element list with your prompt:
-        masks, scores, boxes = self.predictor.predict([prompt])
+        # feed the image abd segment it
+        segments = self.mask_generator.generate(img)
 
         results = []
-        for mask, score, box in zip(masks, scores, boxes):
-            # convert to CVAT RLE
+        for seg in segments:
+            # 'segmentation', 'area', 'bbox', 'predicted_iou', 'point_coords', 'stability_score', 'crop_box
+            mask  = seg["segmentation"]
+            box   = seg["bbox"]
+            score = seg.get("stability_score", 1.0)
+
+            # convert to CVAT mask format
             cvat_mask = to_cvat_mask(box, mask)
 
+            if cvat_mask is None:
+                continue       # drop empty proposals
+
             # extract one polygon (largest contour) if needed
-            contours = find_contours(mask.astype(float), MASK_THRESHOLD)
-            if contours:
-                poly = approximate_polygon(
-                    np.flip(contours[0], axis=1),
-                    tolerance=2.5
-                ).ravel().tolist()
-            else:
-                poly = []
+            contour = find_contours(mask, MASK_THRESHOLD)
+            contour = approximate_polygon(np.flip(contour[0], axis=1), tolerance=2.5)
 
             results.append({
                 "label":      label,
                 "confidence": f"{score:.4f}",
                 "type":       "mask",
                 "mask":       cvat_mask,
-                "points":     poly,
+                "points":     contour.ravel().tolist(),
                 "attributes": []
             })
+
+        print("results listos, cantidad:", len(results))
 
         return results
 
@@ -97,7 +128,7 @@ class ModelHandler:
 #                 keep.append(b)
 #         return keep
 
-#     def infer(self, image, prompt, label):
+#     def infer(self, image, label):
 #         # 1) Obtener las anotaciones de la imagen y convertirlas a embeddings
 #         # Para "Detect Everything" se usa el predictor de SAM
 #         # Para los embeddings se puede usar SAM o SAM2 (más rápido que SAM)

@@ -49,7 +49,7 @@ spec:
         - kind: RUN
           value: |
             apt-get update && \
-            apt-get install -y python3-pip git curl && \
+            apt-get install -y pip python3-pip git curl && \
             rm -rf /var/lib/apt/lists/*
 
         # ensure python → python3
@@ -62,32 +62,37 @@ spec:
         - kind: RUN
           value: pip install --upgrade pip
 
-        # install PyTorch with CUDA support
+        # 1) Install PyTorch with CUDA
         - kind: RUN
           value: |
             pip install \
               torch torchvision torchaudio \
               --index-url https://download.pytorch.org/whl/cu118
 
-        # install SAM 2 and dependencies
+        # 2) clone the SAM2 source
+        - kind: RUN
+          value: |
+            git clone https://github.com/facebookresearch/sam2.git /opt/nuclio/sam2
+
+        # 3) install it in editable mode
+        - kind: RUN
+          value: pip install -e /opt/nuclio/sam2
+
+        # 4) Install the rest of your Python deps
         - kind: RUN
           value: |
             pip install \
-              git+https://github.com/facebookresearch/sam2.git@main \
               opencv-python-headless \
-              numpy\
-              scikit-image
+              numpy \
+              scikit-image \
+              huggingface_hub
 
-        # (Optional) Hugging Face Hub for from_pretrained methods
-        - kind: RUN
-          value: pip install huggingface_hub
-
-        # download SAM 2 weights once at build time
+        # 5) Download the **SAM-2.1** Hiera-Large checkpoint
         - kind: RUN
           value: |
             curl -L \
-              https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_large.pt \
-              -o /opt/nuclio/sam2/sam2_hiera_large.pt
+              https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_large.pt \
+              -o /opt/nuclio/sam2/sam2.1_hiera_large.pt
 
   triggers:
     httpTrigger:
