@@ -1,9 +1,11 @@
 import numpy as np
 from sam2.build_sam import build_sam2
 from sam2.automatic_mask_generator import SAM2AutomaticMaskGenerator
+from sam2.sam2_image_predictor import SAM2ImagePredictor
 from skimage.measure import find_contours, approximate_polygon
 import torch
 import math
+import types
 # from pycocotools import mask as maskUtils
 
 MASK_THRESHOLD = 0.5
@@ -45,6 +47,7 @@ class ModelHandler:
         self.sam_checkpoint = "/opt/nuclio/sam2/sam2.1_hiera_large.pt"
         self.model_cfg = "configs/sam2.1/sam2.1_hiera_l.yaml"
 
+        # Instantiate the automatic mask generator
         self.mask_generator = SAM2AutomaticMaskGenerator(
             build_sam2(self.model_cfg, self.sam_checkpoint, device=self.device, apply_postprocessing=False),
             # use_m2m=True,           # <-- enable mask-to-mask refinement
@@ -69,6 +72,54 @@ class ModelHandler:
             min_mask_region_area=5,   # drop tiny objects <5 px
 
         )
+
+        # 1) Patch set_image to save image embeddings after each set
+        orig_set_image = self.mask_generator.predictor.set_image
+        def patched_set_image(predictor_self, image):
+            result = orig_set_image(image)
+            # only save the *first* time (i.e. the full‐image pass)
+            if not hasattr(predictor_self, "_got_global_embedding"):
+                # safely pull out the embeddings if present
+                feats = getattr(predictor_self, "_features", {})
+                if "image_embed" in feats:
+                    predictor_self.saved_image_embeddings = feats["image_embed"]
+                else:
+                    print(
+                        f"[patch] no 'image_embed' in features keys: {list(feats.keys())}"
+                    )
+                predictor_self._got_global_embedding = True
+            return result
+        self.mask_generator.predictor.set_image = patched_set_image.__get__(
+            self.mask_generator.predictor,
+            self.mask_generator.predictor.__class__
+        )
+
+        # 2) Patch predict_masks to capture mask embeddings
+        self.mask_embeddings = []
+        decoder = self.mask_generator.predictor.model.sam_mask_decoder
+        orig_predict_masks = decoder.predict_masks
+
+        def patched_predict_masks(decoder_self,
+                                  image_embeddings, image_pe,
+                                  sparse_prompt_embeddings,
+                                  dense_prompt_embeddings,
+                                  repeat_image,
+                                  high_res_features=None):
+            masks, iou_preds, tokens, obj_scores = orig_predict_masks(
+                image_embeddings=image_embeddings,
+                image_pe=image_pe,
+                sparse_prompt_embeddings=sparse_prompt_embeddings,
+                dense_prompt_embeddings=dense_prompt_embeddings,
+                repeat_image=repeat_image,
+                high_res_features=high_res_features,
+            )
+            # tokens: [1, num_masks, C]
+            self.mask_embeddings.extend(tokens.detach().cpu().tolist())
+
+            return masks, iou_preds, tokens, obj_scores
+
+        # bind the patched method to the decoder instance
+        decoder.predict_masks = types.MethodType(patched_predict_masks, decoder)
 
     def _segments_to_cvat_masks(self, segments, label):
         results = []
@@ -103,9 +154,34 @@ class ModelHandler:
     def infer(self, image, label: str):
         img = np.array(image)
 
-        # Get all segmentations from the image
+        # reset embeddings list for this call
+        self.mask_embeddings.clear()
+
+        # generate masks (patched methods will capture embeddings)
         segments = self.mask_generator.generate(img)
         print("Cantidad de segmentos obtenidos:", len(segments))
+
+        # print("Embedding global:", self.mask_generator.predictor.saved_image_features)
+        # print("Embeddings de máscaras:", self.mask_embeddings)
+
+        print("Cantidad de segmentos obtenidos:", len(segments))
+
+        embedding_global = self.mask_generator.predictor.saved_image_embeddings
+        embedding_global = embedding_global.detach().cpu().numpy()
+
+        embeddings = np.array(self.mask_embeddings)
+        # embeddings = embeddings.detach().cpu().numpy()
+
+        print("type:")
+        print("Embedding global:", type(embedding_global))
+        print("Embeddings de máscaras:", type(embeddings))
+
+        print("shape:")
+        print("Embedding global:", embedding_global.shape)
+        print("Embeddings de máscaras:", embeddings.shape)
+
+
+        # print(1/0)
 
         # Post-process segments to CVAT mask format
         results = self._segments_to_cvat_masks(segments, label)
