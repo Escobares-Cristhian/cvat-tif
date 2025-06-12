@@ -2,10 +2,11 @@ import numpy as np
 from sam2.build_sam import build_sam2
 from sam2.automatic_mask_generator import SAM2AutomaticMaskGenerator
 from skimage.measure import find_contours, approximate_polygon
+import torch
+import math
 # from pycocotools import mask as maskUtils
 
 MASK_THRESHOLD = 0.5
-IOU_THRESHOLD = 0.99  # IoU threshold for NMS
 
 def to_cvat_mask(box, mask_2d):
     """
@@ -34,35 +35,42 @@ def to_cvat_mask(box, mask_2d):
     return mask_flat
 
 class ModelHandler:
-    def __init__(self, checkpoint: str, image_size: tuple):
+    def __init__(self, image_size: tuple):
         """
         checkpoint: path to sam2 checkpoint (.pt)
         image_size: (height, width) of expected input images
         """
         self.image_h, self.image_w = image_size
-        # Build the core SAM2 model
-        model_cfg = "configs/sam2.1/sam2.1_hiera_l.yaml"
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.sam_checkpoint = "/opt/nuclio/sam2/sam2.1_hiera_large.pt"
+        self.model_cfg = "configs/sam2.1/sam2.1_hiera_l.yaml"
 
         self.mask_generator = SAM2AutomaticMaskGenerator(
-            build_sam2(model_cfg, checkpoint, device="cuda", apply_postprocessing=False),
+            build_sam2(self.model_cfg, self.sam_checkpoint, device=self.device, apply_postprocessing=False),
+            # use_m2m=True,           # <-- enable mask-to-mask refinement
+            # multimask_output=False, # <-- disable multimask output
             points_per_side=64,           # finer grid → better boundary detail
-            pred_iou_thresh=0.90,         # stricter mask IoU filtering
-            stability_score_thresh=0.90,  # stricter stability filtering
+            pred_iou_thresh=0,            # no mask IoU filtering
+            stability_score_thresh=0.8,   # stricter stability filtering
+            box_nms_thresh=0.85,          # IoU threshold for NMS (for similar masks)
 
             # --- crop parameters ---
             crop_n_layers=1,                   # run one extra layer of crops
             crop_overlap_ratio=0.5,            # 50% overlap between tiles
-            crop_n_points_downscale_factor=2,  # downscale points by 2x in crops
+            crop_n_points_downscale_factor=1,  # downscale points by 1x in crops
+            crop_nms_thresh=0.85,               # IoU threshold for NMS in crops (for similar masks)
+
+
+            # --- GPU parameters ---
+            points_per_batch=64,  # number of points to process in parallel (default: 64)
+            output_mode="binary_mask",  # output binary masks (default: "binary_mask" but consumes more memory, alternative: "coco_rle")
 
             # --- post‐processing ---
-            min_mask_region_area=5   # drop tiny speckles <5 px
+            min_mask_region_area=5,   # drop tiny objects <5 px
+
         )
 
-    def infer(self, image, label: str):
-        img = np.array(image)
-        # feed the image abd segment it
-        segments = self.mask_generator.generate(img)
-
+    def _segments_to_cvat_masks(self, segments, label):
         results = []
         for seg in segments:
             # 'segmentation', 'area', 'bbox', 'predicted_iou', 'point_coords', 'stability_score', 'crop_box
@@ -78,6 +86,8 @@ class ModelHandler:
 
             # extract one polygon (largest contour) if needed
             contour = find_contours(mask, MASK_THRESHOLD)
+            if len(contour) == 0:
+                continue       # drop empty proposals
             contour = approximate_polygon(np.flip(contour[0], axis=1), tolerance=2.5)
 
             results.append({
@@ -88,8 +98,18 @@ class ModelHandler:
                 "points":     contour.ravel().tolist(),
                 "attributes": []
             })
+        return results
 
-        print("results listos, cantidad:", len(results))
+    def infer(self, image, label: str):
+        img = np.array(image)
+
+        # Get all segmentations from the image
+        segments = self.mask_generator.generate(img)
+        print("Cantidad de segmentos obtenidos:", len(segments))
+
+        # Post-process segments to CVAT mask format
+        results = self._segments_to_cvat_masks(segments, label)
+        print("Cantidad de segmentos procesados:", len(results))
 
         return results
 
@@ -99,34 +119,6 @@ class ModelHandler:
 #     def __init__(self, checkpoint, image_size):
 #         self.checkpoint = checkpoint
 #         self.image_h, self.image_w = image_size
-
-#     def _iou(self, box1, box2):
-#         """Intersection over Union of two boxes (x1,y1,x2,y2)."""
-#         xa = max(box1[0], box2[0])
-#         ya = max(box1[1], box2[1])
-#         xb = min(box1[2], box2[2])
-#         yb = min(box1[3], box2[3])
-#         inter_w = max(0, xb - xa)
-#         inter_h = max(0, yb - ya)
-#         inter = inter_w * inter_h
-#         area1 = (box1[2] - box1[0]) * (box1[3] - box1[1])
-#         area2 = (box2[2] - box2[0]) * (box2[3] - box2[1])
-#         union = area1 + area2 - inter
-#         return inter / union if union else 0.0
-
-#     def _filter_boxes_nms(self, boxes, thresh):
-#         """
-#         Greedy NMS to remove boxes with IoU > thresh.
-#         """
-#         # sort descending by area
-#         boxes = sorted(boxes,
-#                     key=lambda b: (b[2]-b[0])*(b[3]-b[1]),
-#                     reverse=True)
-#         keep = []
-#         for b in boxes:
-#             if all(self._iou(b, k) < thresh for k in keep):
-#                 keep.append(b)
-#         return keep
 
 #     def infer(self, image, label):
 #         # 1) Obtener las anotaciones de la imagen y convertirlas a embeddings

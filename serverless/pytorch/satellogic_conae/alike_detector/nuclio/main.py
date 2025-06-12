@@ -4,12 +4,8 @@ import io
 from PIL import Image
 from model_handler import ModelHandler
 
-# Point to the SAM 2 checkpoint that we bake into the image
-SAM2_CHECKPOINT = "/opt/nuclio/sam2/sam2.1_hiera_large.pt"
-
 def init_context(context):
-    # Store the checkpoint path for use in each invocation
-    context.user_data.checkpoint = SAM2_CHECKPOINT
+    return
 
 def handler(context, event):
     print("\nhandler executed")
@@ -45,7 +41,7 @@ def handler(context, event):
     # Instantiate and run inference
     image_size = (image.height, image.width)
     print("Full image size:", image_size)
-    model = ModelHandler(context.user_data.checkpoint, image_size)
+    model = ModelHandler(image_size)
     context.user_data.model = model
 
     print("Trying model.infer")
