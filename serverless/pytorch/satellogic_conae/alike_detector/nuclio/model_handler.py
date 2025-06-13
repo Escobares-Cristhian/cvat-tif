@@ -54,44 +54,45 @@ class ModelHandler:
             # multimask_output=False, # <-- disable multimask output
             points_per_side=64,           # finer grid → better boundary detail
             pred_iou_thresh=0,            # no mask IoU filtering
-            stability_score_thresh=0.8,   # stricter stability filtering
-            box_nms_thresh=0.85,          # IoU threshold for NMS (for similar masks)
+            stability_score_thresh=0,   # stricter stability filtering
+            box_nms_thresh=1.1,          # IoU threshold for NMS (for similar masks)
 
             # --- crop parameters ---
             crop_n_layers=1,                   # run one extra layer of crops
             crop_overlap_ratio=0.5,            # 50% overlap between tiles
             crop_n_points_downscale_factor=1,  # downscale points by 1x in crops
-            crop_nms_thresh=0.85,               # IoU threshold for NMS in crops (for similar masks)
-
+            crop_nms_thresh=1.1,               # IoU threshold for NMS in crops (for similar masks)
 
             # --- GPU parameters ---
             points_per_batch=64,  # number of points to process in parallel (default: 64)
             output_mode="binary_mask",  # output binary masks (default: "binary_mask" but consumes more memory, alternative: "coco_rle")
 
             # --- post‐processing ---
-            min_mask_region_area=5,   # drop tiny objects <5 px
+            min_mask_region_area=0,   # drop tiny objects <5 px
 
         )
 
-        # 1) Patch set_image to save image embeddings after each set
-        orig_set_image = self.mask_generator.predictor.set_image
-        def patched_set_image(predictor_self, image):
-            result = orig_set_image(image)
-            # only save the *first* time (i.e. the full‐image pass)
-            if not hasattr(predictor_self, "_got_global_embedding"):
-                # safely pull out the embeddings if present
-                feats = getattr(predictor_self, "_features", {})
-                if "image_embed" in feats:
-                    predictor_self.saved_image_embeddings = feats["image_embed"]
-                else:
-                    print(
-                        f"[patch] no 'image_embed' in features keys: {list(feats.keys())}"
-                    )
-                predictor_self._got_global_embedding = True
-            return result
-        self.mask_generator.predictor.set_image = patched_set_image.__get__(
-            self.mask_generator.predictor,
-            self.mask_generator.predictor.__class__
+        # 1) Patch reset_predictor to save image embeddings before they're cleared
+        orig_reset_predictor = self.mask_generator.predictor.reset_predictor
+        # storage for the latest full-image embedding
+        self.mask_generator.predictor.saved_image_embeddings = None
+
+        def custom_reset_predictor(predictor_self):
+            # save features if present (handle None _features)
+            feats = getattr(predictor_self, "_features", None) or {}
+            if "image_embed" in feats:
+                predictor_self.saved_image_embeddings = feats["image_embed"]
+            else:
+                print(f"[patch] no 'image_embed' in features: {list(feats.keys())}")
+                if len(list(feats.keys())) == 0:
+                    print(f"feats is empty, look: {feats}")
+            # call the original reset
+            orig_reset_predictor()
+
+        # bind the custom reset to the predictor instance
+        self.mask_generator.predictor.reset_predictor = types.MethodType(
+            custom_reset_predictor,
+            self.mask_generator.predictor
         )
 
         # 2) Patch predict_masks to capture mask embeddings
@@ -123,8 +124,9 @@ class ModelHandler:
 
     def _segments_to_cvat_masks(self, segments, label):
         results = []
+        empty_count = 0
         for seg in segments:
-            # 'segmentation', 'area', 'bbox', 'predicted_iou', 'point_coords', 'stability_score', 'crop_box
+            # 'segmentation', 'area', 'bbox', 'predicted_iou', 'point_coords', 'stability_score', 'crop_box'
             mask  = seg["segmentation"]
             box   = seg["bbox"]
             score = seg.get("stability_score", 1.0)
@@ -133,11 +135,13 @@ class ModelHandler:
             cvat_mask = to_cvat_mask(box, mask)
 
             if cvat_mask is None:
+                empty_count += 1
                 continue       # drop empty proposals
 
             # extract one polygon (largest contour) if needed
             contour = find_contours(mask, MASK_THRESHOLD)
             if len(contour) == 0:
+                empty_count += 1
                 continue       # drop empty proposals
             contour = approximate_polygon(np.flip(contour[0], axis=1), tolerance=2.5)
 
@@ -149,45 +153,43 @@ class ModelHandler:
                 "points":     contour.ravel().tolist(),
                 "attributes": []
             })
+        print(f"Dropped {empty_count} empty proposals")
         return results
 
     def infer(self, image, label: str):
         img = np.array(image)
 
-        # reset embeddings list for this call
+        # reset mask embeddings for this inference call
         self.mask_embeddings.clear()
 
-        # generate masks (patched methods will capture embeddings)
+        # generate masks (custom reset_predictor will save full-image embedding)
         segments = self.mask_generator.generate(img)
         print("Cantidad de segmentos obtenidos:", len(segments))
 
-        # print("Embedding global:", self.mask_generator.predictor.saved_image_features)
-        # print("Embeddings de máscaras:", self.mask_embeddings)
+        # DUMMY: remove this when not debugging
+        segments = segments[:100]  # limit to 100 segments for testing
 
-        print("Cantidad de segmentos obtenidos:", len(segments))
-
-        embedding_global = self.mask_generator.predictor.saved_image_embeddings
-        embedding_global = embedding_global.detach().cpu().numpy()
-
-        embeddings = np.array(self.mask_embeddings)
-        # embeddings = embeddings.detach().cpu().numpy()
-
-        print("type:")
-        print("Embedding global:", type(embedding_global))
-        print("Embeddings de máscaras:", type(embeddings))
-
-        print("shape:")
-        print("Embedding global:", embedding_global.shape)
-        print("Embeddings de máscaras:", embeddings.shape)
-
-
-        # print(1/0)
-
-        # Post-process segments to CVAT mask format
+        # convert segments to CVAT format
         results = self._segments_to_cvat_masks(segments, label)
         print("Cantidad de segmentos procesados:", len(results))
 
-        return results
+        # retrieve saved embeddings
+        global_emb = self.mask_generator.predictor.saved_image_embeddings
+        if global_emb is not None:
+            global_emb = global_emb.detach().cpu().numpy()
+
+        mask_embs = np.array(self.mask_embeddings)
+
+        print("type:")
+        print("Embedding global:", type(global_emb))
+        print("Embeddings de máscaras:", type(mask_embs))
+
+        print("shape:")
+        print("Embedding global:", None if global_emb is None else global_emb.shape)
+        print("Embeddings de máscaras:", mask_embs.shape)
+
+        return results #, global_emb, mask_embs
+
 
 # from segment_anything import sam_model_registry, SamPredictor
 
