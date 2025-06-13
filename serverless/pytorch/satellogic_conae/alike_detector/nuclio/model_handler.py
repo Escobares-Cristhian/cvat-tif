@@ -4,7 +4,6 @@ from sam2.automatic_mask_generator import SAM2AutomaticMaskGenerator
 from sam2.sam2_image_predictor import SAM2ImagePredictor
 from skimage.measure import find_contours, approximate_polygon
 import torch
-import math
 import types
 # from pycocotools import mask as maskUtils
 
@@ -72,41 +71,32 @@ class ModelHandler:
 
         )
 
-        # 1) Patch reset_predictor to save image embeddings before they're cleared
-        orig_reset_predictor = self.mask_generator.predictor.reset_predictor
-        # storage for the latest full-image embedding
+        # Patch reset_predictor to save the full-image embedding
+        orig_reset = self.mask_generator.predictor.reset_predictor
         self.mask_generator.predictor.saved_image_embeddings = None
-
-        def custom_reset_predictor(predictor_self):
-            # save features if present (handle None _features)
-            feats = getattr(predictor_self, "_features", None) or {}
+        def patched_reset(self_predictor):
+            feats = getattr(self_predictor, "_features", None) or {}
             if "image_embed" in feats:
-                predictor_self.saved_image_embeddings = feats["image_embed"]
+                self_predictor.saved_image_embeddings = feats["image_embed"]
             else:
                 print(f"[patch] no 'image_embed' in features: {list(feats.keys())}")
-                if len(list(feats.keys())) == 0:
-                    print(f"feats is empty, look: {feats}")
-            # call the original reset
-            orig_reset_predictor()
-
-        # bind the custom reset to the predictor instance
+            orig_reset()
         self.mask_generator.predictor.reset_predictor = types.MethodType(
-            custom_reset_predictor,
+            patched_reset,
             self.mask_generator.predictor
         )
 
-        # 2) Patch predict_masks to capture mask embeddings
+        # Patch predict_masks to collect mask embeddings
         self.mask_embeddings = []
         decoder = self.mask_generator.predictor.model.sam_mask_decoder
-        orig_predict_masks = decoder.predict_masks
-
-        def patched_predict_masks(decoder_self,
-                                  image_embeddings, image_pe,
-                                  sparse_prompt_embeddings,
-                                  dense_prompt_embeddings,
-                                  repeat_image,
-                                  high_res_features=None):
-            masks, iou_preds, tokens, obj_scores = orig_predict_masks(
+        orig_predict = decoder.predict_masks
+        def patched_predict(decoder_self,
+                            image_embeddings, image_pe,
+                            sparse_prompt_embeddings,
+                            dense_prompt_embeddings,
+                            repeat_image,
+                            high_res_features=None):
+            masks, iou_preds, tokens, obj_scores = orig_predict(
                 image_embeddings=image_embeddings,
                 image_pe=image_pe,
                 sparse_prompt_embeddings=sparse_prompt_embeddings,
@@ -114,81 +104,57 @@ class ModelHandler:
                 repeat_image=repeat_image,
                 high_res_features=high_res_features,
             )
-            # tokens: [1, num_masks, C]
             self.mask_embeddings.extend(tokens.detach().cpu().tolist())
-
             return masks, iou_preds, tokens, obj_scores
-
-        # bind the patched method to the decoder instance
-        decoder.predict_masks = types.MethodType(patched_predict_masks, decoder)
+        decoder.predict_masks = types.MethodType(patched_predict, decoder)
 
     def _segments_to_cvat_masks(self, segments, label):
         results = []
-        empty_count = 0
-        for seg in segments:
-            # 'segmentation', 'area', 'bbox', 'predicted_iou', 'point_coords', 'stability_score', 'crop_box'
-            mask  = seg["segmentation"]
-            box   = seg["bbox"]
+        valid_indices = []
+        count = 0
+        for idx, seg in enumerate(segments):
+            mask = seg["segmentation"]
+            box = seg["bbox"]
             score = seg.get("stability_score", 1.0)
-
-            # convert to CVAT mask format
-            cvat_mask = to_cvat_mask(box, mask)
-
-            if cvat_mask is None:
-                empty_count += 1
-                continue       # drop empty proposals
-
-            # extract one polygon (largest contour) if needed
+            cvat = to_cvat_mask(box, mask)
             contour = find_contours(mask, MASK_THRESHOLD)
-            if len(contour) == 0:
-                empty_count += 1
-                continue       # drop empty proposals
-            contour = approximate_polygon(np.flip(contour[0], axis=1), tolerance=2.5)
-
+            if not contour:
+                count += 1
+                continue
+            valid_indices.append(idx)
+            poly = approximate_polygon(np.flip(contour[0], axis=1), tolerance=2.5)
             results.append({
-                "label":      label,
+                "label": label,
                 "confidence": f"{score:.4f}",
-                "type":       "mask",
-                "mask":       cvat_mask,
-                "points":     contour.ravel().tolist(),
+                "type": "mask",
+                "mask": cvat,
+                "points": poly.ravel().tolist(),
                 "attributes": []
             })
-        print(f"Dropped {empty_count} empty proposals")
-        return results
+        print(f"Filtered out {count} segments without contours")
+        return results, valid_indices
 
     def infer(self, image, label: str):
         img = np.array(image)
-
-        # reset mask embeddings for this inference call
         self.mask_embeddings.clear()
-
-        # generate masks (custom reset_predictor will save full-image embedding)
         segments = self.mask_generator.generate(img)
         print("Cantidad de segmentos obtenidos:", len(segments))
 
-        # DUMMY: remove this when not debugging
-        segments = segments[:100]  # limit to 100 segments for testing
-
-        # convert segments to CVAT format
-        results = self._segments_to_cvat_masks(segments, label)
+        # Convert to CVAT masks
+        results, valid_indices = self._segments_to_cvat_masks(segments, label)
         print("Cantidad de segmentos procesados:", len(results))
 
-        # retrieve saved embeddings
+        # Retrieve embeddings
         global_emb = self.mask_generator.predictor.saved_image_embeddings
         if global_emb is not None:
             global_emb = global_emb.detach().cpu().numpy()
-
-        mask_embs = np.array(self.mask_embeddings)
-
-        print("type:")
-        print("Embedding global:", type(global_emb))
-        print("Embeddings de máscaras:", type(mask_embs))
+        mask_embs = np.array(self.mask_embeddings)[valid_indices]
 
         print("shape:")
         print("Embedding global:", None if global_emb is None else global_emb.shape)
         print("Embeddings de máscaras:", mask_embs.shape)
 
-        return results #, global_emb, mask_embs
+        return results#, global_emb, mask_embs
 
 
 # from segment_anything import sam_model_registry, SamPredictor
