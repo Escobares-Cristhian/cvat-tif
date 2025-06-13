@@ -52,15 +52,15 @@ class ModelHandler:
             # use_m2m=True,           # <-- enable mask-to-mask refinement
             # multimask_output=False, # <-- disable multimask output
             points_per_side=64,           # finer grid → better boundary detail
-            pred_iou_thresh=0,            # no mask IoU filtering
-            stability_score_thresh=0,   # stricter stability filtering
-            box_nms_thresh=1.1,          # IoU threshold for NMS (for similar masks)
+            pred_iou_thresh=0.5,            # no mask IoU filtering
+            stability_score_thresh=0.5,   # stricter stability filtering
+            box_nms_thresh=0.9,          # IoU threshold for NMS (for similar masks)
 
             # --- crop parameters ---
             crop_n_layers=1,                   # run one extra layer of crops
             crop_overlap_ratio=0.5,            # 50% overlap between tiles
             crop_n_points_downscale_factor=1,  # downscale points by 1x in crops
-            crop_nms_thresh=1.1,               # IoU threshold for NMS in crops (for similar masks)
+            crop_nms_thresh=0.9,               # IoU threshold for NMS in crops (for similar masks)
 
             # --- GPU parameters ---
             points_per_batch=64,  # number of points to process in parallel (default: 64)
@@ -68,8 +68,29 @@ class ModelHandler:
 
             # --- post‐processing ---
             min_mask_region_area=0,   # drop tiny objects <5 px
-
         )
+        # self.mask_generator = SAM2AutomaticMaskGenerator(
+        #     build_sam2(self.model_cfg, self.sam_checkpoint, device=self.device, apply_postprocessing=False),
+        #     # use_m2m=True,           # <-- enable mask-to-mask refinement
+        #     # multimask_output=False, # <-- disable multimask output
+        #     points_per_side=64,           # finer grid → better boundary detail
+        #     pred_iou_thresh=0,            # no mask IoU filtering
+        #     stability_score_thresh=0,   # stricter stability filtering
+        #     box_nms_thresh=1.1,          # IoU threshold for NMS (for similar masks)
+
+        #     # --- crop parameters ---
+        #     crop_n_layers=1,                   # run one extra layer of crops
+        #     crop_overlap_ratio=0.5,            # 50% overlap between tiles
+        #     crop_n_points_downscale_factor=1,  # downscale points by 1x in crops
+        #     crop_nms_thresh=1.1,               # IoU threshold for NMS in crops (for similar masks)
+
+        #     # --- GPU parameters ---
+        #     points_per_batch=64,  # number of points to process in parallel (default: 64)
+        #     output_mode="binary_mask",  # output binary masks (default: "binary_mask" but consumes more memory, alternative: "coco_rle")
+
+        #     # --- post‐processing ---
+        #     min_mask_region_area=0,   # drop tiny objects <5 px
+        # )
 
         # Patch reset_predictor to save the full-image embedding
         orig_reset = self.mask_generator.predictor.reset_predictor

@@ -12,13 +12,13 @@ def init_context(context):
 
     # Release cache in GPU memory
     if torch.cuda.is_available():
-        gpu_gb_before = torch.cuda.memory_allocated() / (1024 ** 3)
+        gpu_gb_before = torch.cuda.memory_reserved() / (1024 ** 3)
         print(f"GPU memory allocated before clearing: {gpu_gb_before:.2f} GB")
 
         torch.cuda.empty_cache()
         torch.cuda.ipc_collect()
 
-        gpu_gb_after = torch.cuda.memory_allocated() / (1024 ** 3)
+        gpu_gb_after = torch.cuda.memory_reserved() / (1024 ** 3)
         print(f"GPU memory allocated after clearing: {gpu_gb_after:.2f} GB")
         print(f"GPU memory cleared: {gpu_gb_before - gpu_gb_after:.2f} GB")
     print("Context initialized and caches cleared.")
