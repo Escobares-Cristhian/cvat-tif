@@ -85,7 +85,8 @@ spec:
               opencv-python-headless \
               numpy \
               scikit-image \
-              huggingface_hub
+              huggingface_hub \
+              cvat-sdk
 
         # 5) Download the **SAM-2.1** Hiera-Large checkpoint
         - kind: RUN
