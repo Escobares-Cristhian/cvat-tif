@@ -390,6 +390,7 @@ class LambdaFunction:
                 "image": self._get_image(db_task, mandatory_arg("frame"), quality),
                 "userTextInput": data.get("userTextInput", None),
                 "cvatLabel": data.get("cvatLabel",    None),
+                "cvatLabelId": data.get("cvatLabelId",    None),
                 "taskId": db_task.id,
                 "frame": mandatory_arg("frame"),
             })

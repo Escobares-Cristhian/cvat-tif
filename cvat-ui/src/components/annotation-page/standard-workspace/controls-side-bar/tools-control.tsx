@@ -1500,7 +1500,7 @@ export class ToolsControlComponent extends React.PureComponent<Props, State> {
                         // build a single payload that includes your text
                         const result = await core.lambda.call(jobInstance.taskId, model, {
                             ...restOfBody, frame, job: jobInstance.id,
-                            userTextInput: this.state.userTextInput, cvatLabel: cvatLabel.name,
+                            userTextInput: this.state.userTextInput, cvatLabel: cvatLabel.name, cvatLabelId: cvatLabel.id,
                         }) as DetectedShapes;
 
                         const states = result.map(
