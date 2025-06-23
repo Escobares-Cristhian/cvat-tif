@@ -3,10 +3,33 @@ import base64
 import io
 import os
 from PIL import Image
+import xml.etree.ElementTree as ET
+from cvat_sdk.api_client import Configuration, ApiClient
+
 from model_handler import ModelHandler
 import torch
 import gc
-from cvat_sdk.api_client import Configuration, ApiClient
+
+try:
+    import cvat_config
+    # Load CVAT connection settings from the cvat_config module
+    CVAT_SCHEME = cvat_config.CVAT_SCHEME
+    CVAT_HOST   = cvat_config.CVAT_HOST
+    CVAT_PORT   = cvat_config.CVAT_PORT
+    CVAT_USERNAME   = cvat_config.CVAT_USERNAME
+    CVAT_PASSWORD   = cvat_config.CVAT_PASSWORD
+except ImportError:
+    print("cvat_config module not found. Ensure it is in the same directory as this script.")
+    print("This file is not tracked by git, so it must be created manually with the form:")
+    print("""
+CVAT_SCHEME = "http"
+CVAT_HOST   = <host as string: default is localhost or IP>
+CVAT_PORT   = <port as string: default is 8080>
+CVAT_USERNAME   = <username as string>
+CVAT_PASSWORD   = <password as string>
+""")
+    print(1/0)
+
 
 def init_context(context):
     # Release cache in RAM
@@ -27,38 +50,46 @@ def init_context(context):
 
     return
 
-def get_embeddings_from_cvat_annotations(data, YOUR_LABEL):
-    # 2. Extract the task ID and frame number that CVAT passed in
-    task_id = data.get("task") or data.get("task_id")
-    frame_number = data.get("frame") or data.get("frame_number")
+def get_embeddings_from_cvat_annotations(task_id: int, frame_number: int, label_name: str):
+    """
+    Retrieves and filters mask annotations from CVAT for a given task, frame, and label.
+    Raises ConnectionError if unable to reach the CVAT server.
+    """
+    global CVAT_SCHEME, CVAT_HOST, CVAT_PORT, CVAT_USERNAME, CVAT_PASSWORD
 
-    if task_id is None or frame_number is None:
-        raise KeyError(f"Missing task_id/frame_number in payload; got keys {list(data)}")
+    if task_id is None:
+        raise ValueError("task_id cannot be None")
+    if frame_number is None:
+        raise ValueError("frame_number cannot be None")
 
-    print(f"task_id: {task_id}, frame_number: {frame_number}")
+    # Construct base URL without trailing path; SDK appends /api internally
+    base_url = f"{CVAT_SCHEME}://{CVAT_HOST}:{CVAT_PORT}"
 
-    # 3. Configure the low-level CVAT SDK client (auto-read URL/creds from env)
+    # Configure the low-level SDK client
     config = Configuration(
-        host     = os.getenv("CVAT_HOST") + "/api",
-        username = os.getenv("CVAT_USERNAME"),
-        password = os.getenv("CVAT_PASSWORD"),
+        host     = base_url,
+        username = CVAT_USERNAME,
+        password = CVAT_PASSWORD,
     )
 
-    # 4. Fetch exactly those annotations for this frame
-    with ApiClient(config) as api_client:
-        parsed, _ = api_client.tasks_api.retrieve_annotations(
-            id      = task_id,
-            format_ = "CVAT 1.1",           # low-level export format :contentReference[oaicite:1]{index=1}
-            frame   = frame_number,
-            _parse_response = True,
-        )
+    # Attempt to retrieve annotations
+    try:
+        with ApiClient(config) as api_client:
+            parsed, _ = api_client.tasks_api.retrieve_annotations(
+                id=int(task_id),
+                _parse_response=True,
+            )
+    except Exception as e:
+        raise ConnectionError(f"Failed to connect to CVAT at {base_url}/api: {e}")
 
-    # 5. Now `parsed.shapes` holds all shapes/masks; filter by your label:
-    embeddings = []
-    for shape in parsed.shapes:
-        if shape.shape_type == "mask" and shape.label_name == YOUR_LABEL:
-            # here you can feed shape.mask (RLE) back into your SAM2 predictor
-            embeddings.append(shape)
+    # Filter by frame, shape type, and label
+    embeddings = [
+        shape for shape in parsed.shapes
+        if getattr(shape, "frame", None) == int(frame_number)
+           and shape.shape_type == "mask"
+           and shape.label_name == label_name
+    ]
+
     return embeddings
 
 def handler(context, event):
@@ -67,7 +98,9 @@ def handler(context, event):
 
     print("data['image'] type:", type(data["image"]))
 
-    print(f"task: {data.get('taskId')}, frame: {data.get('frame')}")
+    taskId = data["taskId"]
+    frame = data["frame"]
+    print(f"taskId: {taskId}, frame: {frame}")
 
     # Decode the base64 image
     image = Image.open(io.BytesIO(base64.b64decode(data["image"]))).convert("RGB")
@@ -95,7 +128,7 @@ def handler(context, event):
     print("label obtenido CVAT:", label)
 
     # Get embeddings from CVAT annotations of label
-    embeddings = get_embeddings_from_cvat_annotations(data, label)
+    embeddings = get_embeddings_from_cvat_annotations(taskId, frame, label)
     print("embeddings:")
     print(f"type: {type(embeddings)}")
     print(f"len: {len(embeddings)}")
