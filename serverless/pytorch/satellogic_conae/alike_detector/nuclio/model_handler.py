@@ -6,6 +6,8 @@ from skimage.measure import find_contours, approximate_polygon
 import torch
 import types
 # from pycocotools import mask as maskUtils
+import time
+import math
 
 MASK_THRESHOLD = 0.5
 
@@ -35,49 +37,51 @@ def to_cvat_mask(box, mask_2d):
 
     return mask_flat
 
-def to_mask2d(cvat_mask):
+def rle_to_mask2d(data, start_val=0):
     """
-    Inverse of to_cvat_mask.
+    Decode run‐length encoding (RLE) + box tail back into the 2D mask crop.
 
     Parameters
     ----------
-    cvat_mask : sequence of int
-        Flat list whose last four entries are [xtl, ytl, xbr, ybr]
-        and whose preceding entries are mask bits in row-major order.
+    data : Sequence[int]
+        A sequence whose last four entries are [xtl, ytl, xbr, ybr] (inclusive
+        pixel coords), and whose preceding entries are RLE counts:
+        [#zeros, #ones, #zeros, #ones, …].
+    start_val : {0,1}, default 0
+        Which value the first run‐length corresponds to (usually 0).
 
     Returns
     -------
-    box : list of int
-        [xtl, ytl, w, h] with w = xbr - xtl, h = ybr - ytl
     mask_2d : ndarray of shape (h, w), dtype uint8
-        Reconstructed 2D binary mask (0/1).
+        The reconstructed binary mask crop.
+
+    Raises
+    ------
+    ValueError
+        If the total run‐length doesn’t match the box area.
     """
-    # ensure we have a mutable list of ints
-    data = list(map(int, cvat_mask))
-    # extract box coords
-    xtl, ytl, xbr, ybr = data[-4:]
-    w = xbr - xtl
-    h = ybr - ytl
+    # 1) unpack box coords and compute size
+    xtl, ytl, xbr, ybr = map(int, data[-4:])
+    h = ybr - ytl + 1
+    w = xbr - xtl + 1
 
-    # the rest are the mask bits
-    flat_mask = data[:-4]
-    if len(flat_mask) != h * w:
-        raise ValueError(f"Expected {h*w} mask bits, got {len(flat_mask)}")
+    # 2) pull off the RLE counts
+    rle = list(map(int, data[:-4]))
+    total = sum(rle)
+    if total != h * w:
+        raise ValueError(f"Expected total run-length {h*w}, got {total}")
 
-    # reshape back to 2D
-    mask_2d = np.array(flat_mask, dtype=np.uint8).reshape((h, w))
+    # 3) decode the runs
+    flat = []
+    val = start_val
+    for length in rle:
+        flat.extend([val] * length)
+        val = 1 - val
 
-    # return box in XYWH form plus the mask
-    return [xtl, ytl, w, h], mask_2d
+    # 4) reshape to 2D crop
+    mask_2d = np.array(flat, dtype=np.uint8).reshape((h, w))
+    return xtl, ytl, h, w, mask_2d
 
-
-# embeddings_proc = []
-# for embedding in embeddings:
-#     embeddings_proc.append({
-#         "id": embedding.id,
-#         "type": embedding.points,
-#         "points": embedding.points if hasattr(embedding, 'points') else None,  # Check if points exists
-#     })
 
 class ModelHandler:
     def __init__(self, image_size: tuple):
@@ -175,6 +179,13 @@ class ModelHandler:
             return masks, iou_preds, tokens, obj_scores
         decoder.predict_masks = types.MethodType(patched_predict, decoder)
 
+        # Initialize encoder:
+        self.encoder = SAM2ImagePredictor(
+            build_sam2(self.model_cfg, self.sam_checkpoint, device=self.device, apply_postprocessing=False),
+            device=self.device
+        )
+
+
     def _segments_to_cvat_masks(self, segments, label):
         results = []
         valid_indices = []
@@ -201,6 +212,86 @@ class ModelHandler:
         print(f"Filtered out {count} segments without contours")
         return results, valid_indices
 
+    def image_to_embedding(self, image):
+        self.encoder.set_image(image)
+        embedding = self.encoder.get_image_embedding()
+        return embedding
+
+    def annotations_to_embeddings(self, full_image, annotations):
+        embeddings = []
+        for annotation in annotations:
+            if str(annotation["type"]) != "mask":
+                raise ValueError(f"Unsupported annotation type: {annotation['type']}. Only 'mask' is supported.")
+            # Convert CVAT mask to 2D mask and box
+            x0, y0, w, h, mask_2d = rle_to_mask2d(annotation["points"])
+            # Extract the region of interest from the image
+            cut_image = full_image[y0:y0+h, x0:x0+w]                # Crop the image to the bounding box
+            # cut_image = np.where(mask_2d[..., None], cut_image, 0)  # Apply the mask to the image
+            cut_image = np.where(np.dstack([mask_2d.T]*3), cut_image, 0)  # Apply the mask to the image ->  (224,121,3) (121,224,3) error
+            # DEBUG: En vez de "0", capaz conviene usar un número aleatorio para que SAM no detecte el fondo como un objeto
+
+            t1 = time.time()
+            embedding = self.image_to_embedding(cut_image)
+            t2 = time.time()
+            print(f"Embedding time: {t2 - t1:.4f} seconds")
+
+            print(f"embedding type: {type(embedding)}") # -> <class 'torch.Tensor'>
+            print(f"embedding shape: {embedding.shape if getattr(embedding, 'shape', None) else 'No shape attribute'}")
+            embeddings.append(embedding.detach().cpu().numpy())
+        return embeddings
+
+    def cosine_similarity(self, vec1, vec2):
+        # 1. Dot product
+        dot = sum(a * b for a, b in zip(vec1, vec2))
+        # 2. Norms
+        norm1 = math.sqrt(sum(a * a for a in vec1))
+        norm2 = math.sqrt(sum(b * b for b in vec2))
+        # 3. Handle zero-vector edge case
+        if norm1 == 0 or norm2 == 0:
+            return 0.0
+        # 4. Cosine similarity
+        return dot / (norm1 * norm2)
+
+    def get_emb_similatiry(self, emb1, emb2):
+        """
+        Calculate the cosine similarity between two embeddings.
+
+        Parameters
+        ----------
+        emb1: torch.Tensor
+            First embedding tensor
+        emb2: torch.Tensor
+            Second embedding tensor
+
+        Returns
+        -------
+        float
+            Cosine similarity between the two embeddings
+        """
+        # emb1, emb2: e.g. (1, C, H, W) or (C, H, W)
+        # squeeze out batch‐dim if present
+        if emb1.ndim == 4 and emb1.shape[0] == 1:
+            e1 = emb1[0]
+            e2 = emb2[0]
+        else:
+            e1 = emb1
+            e2 = emb2
+
+        # now e1, e2 have shape (C, H, W)
+        # dot‐product over channel dim → map of shape (H, W)
+        num = np.sum(e1 * e2, axis=0)
+        # norms over channel dim → two maps (H, W)
+        norm1 = np.linalg.norm(e1, axis=0)
+        norm2 = np.linalg.norm(e2, axis=0)
+        denom = norm1 * norm2
+        # safe divide
+        cos_map = np.zeros_like(num)
+        valid = denom > 0
+        cos_map[valid] = num[valid] / denom[valid]
+
+        # finally, collapse to a single score
+        return float(np.median(cos_map))
+
     def infer(self, image, label: str, annotations_proc: list[dict]):
         """
         Infer the model on the given image and return the results.
@@ -218,13 +309,21 @@ class ModelHandler:
                 - "type": type of the embedding (e.g., "mask", "polygon")
                 - "points": points of the embedding (rle mask)
         """
+        # Preprocess the image
+        img = np.array(image)
+
         # Get embeddings from CVAT annotations
         print("Cantidad de annotations:", len(annotations_proc))
 
+        if len(annotations_proc) > 0:
+            print("Obteniendo embeddings de las anotaciones...")
+            self.annot_embeddings = self.annotations_to_embeddings(img, annotations_proc)
+            print("Cantidad de embeddings obtenidos:", len(self.annot_embeddings))
+        else:
+            print("No se han proporcionado anotaciones para obtener embeddings.")
+            self.annot_embeddings = []
 
-        print(1/0)
-        # Preprocess the image
-        img = np.array(image)
+        # Process the image with the mask generator
         self.mask_embeddings.clear()
         segments = self.mask_generator.generate(img)
         print("Cantidad de segmentos obtenidos:", len(segments))
@@ -238,10 +337,39 @@ class ModelHandler:
         if global_emb is not None:
             global_emb = global_emb.detach().cpu().numpy()
         mask_embs = np.array(self.mask_embeddings)[valid_indices]
+        # DEBUG: uso el primer mask-token embedding de cada máscara. Y paso de (1, 256) -> (1, 256, 1, 1)
+        if len(mask_embs) > 0:
+            mask_embs = np.array([[emb[0].reshape(256,1,1)] for emb in mask_embs])
+
+        print(f"shape mask_embs: {mask_embs.shape}")
 
         print("shape:")
         print("Embedding global:", None if global_emb is None else global_emb.shape)
         print("Embeddings de máscaras:", mask_embs.shape)
+
+        # Get mean annot_embeddings:
+        if len(self.annot_embeddings) > 0:
+            mean_annot_emb = np.mean(np.array(self.annot_embeddings), axis=0)
+            print(f"shape mean_annot_emb: {mean_annot_emb.shape}")
+
+        # Get global embedding of mask (WARNING):
+        if len(mask_embs) > 0:
+            mask_embs = np.array([global_emb * emb for emb in mask_embs])
+            print(f"shape mask_embs after global emb: {mask_embs.shape}")
+
+        # Compare with annot_embeddings:
+        if len(mask_embs) > 0:
+            print(f"shape mask_embs[0]: {mask_embs[0].shape}")
+            sim_embs = np.array([
+                self.get_emb_similatiry(emb, mean_annot_emb) for emb in mask_embs
+            ])
+            print(f"shape sim_embs[0]: {sim_embs[0].shape}")
+            highest_sim_index = np.argmax(sim_embs)
+            highest_sim_value = sim_embs[highest_sim_index]
+            print(f"Highest similarity index: {highest_sim_index}, value: {highest_sim_value:.4f}")
+
+            results = [results[highest_sim_index]]
+
 
         return results#, global_emb, mask_embs
 

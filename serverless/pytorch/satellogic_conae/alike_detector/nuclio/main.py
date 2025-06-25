@@ -169,8 +169,6 @@ def handler(context, event):
     print("Trying model.infer")
     results = model.infer(image, label_name, annotations_proc)
 
-    print(1/0)
-
     # Return CVAT‐compatible JSON
     print("Returning results")
     return context.Response(
