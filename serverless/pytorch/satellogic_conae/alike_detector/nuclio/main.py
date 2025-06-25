@@ -50,7 +50,7 @@ def init_context(context):
 
     return
 
-def get_embeddings_from_cvat_annotations(task_id: int, frame_number: int, label_id: int):
+def get_annotations_from_cvat_annotations(task_id: int, frame_number: int, label_id: int):
     """
     Retrieves and filters mask annotations from CVAT for a given task, frame, and label.
     Raises ConnectionError if unable to reach the CVAT server.
@@ -88,14 +88,14 @@ def get_embeddings_from_cvat_annotations(task_id: int, frame_number: int, label_
         print("Finded annotations of any label:", len(parsed.shapes))
 
     # Filter by frame, shape type, and label
-    embeddings = [
+    annotations = [
         shape for shape in parsed.shapes
         if getattr(shape, "frame", None) == int(frame_number)
         and str(getattr(shape, "type", None)) == "mask"
         and getattr(shape, "label_id", None) == int(label_id)
     ]
 
-    return embeddings
+    return annotations
 
 def handler(context, event):
     print("\nhandler executed")
@@ -142,17 +142,23 @@ def handler(context, event):
     print("label obtenido CVAT:", label_name, type(label_name))
     print("label id obtenido CVAT:", label_id, type(label_id))
 
-    # Get embeddings from CVAT annotations of label
-    embeddings = get_embeddings_from_cvat_annotations(taskId, frame, label_id)
-    print("embeddings:")
-    print(f"type: {type(embeddings)}")
-    print(f"len: {len(embeddings)}")
-    if len(embeddings) > 0:
-        print(f"first embedding type: {type(embeddings[0])}")
-        print(f"first embedding dir attributes: {dir(embeddings[0])}")
-        print(f"first embedding: {embeddings[0]}")
-    # print(f"shape: {embeddings[0].mask.shape if embeddings else 'No embeddings found'}")
-    print(1/0)
+    # Get annotations from CVAT annotations of label
+    annotations = get_annotations_from_cvat_annotations(taskId, frame, label_id)
+    print("annotations:")
+    print(f"type: {type(annotations)}")
+    print(f"len: {len(annotations)}")
+    if len(annotations) > 0:
+        print(f"first annotation type: {type(annotations[0])}")
+        print(f"first annotation dir attributes: {dir(annotations[0])}")
+        print(f"first annotation: {annotations[0]}")
+    annotations_proc = []
+    for annotation in annotations:
+        annotations_proc.append({
+            "id": annotation.id,
+            "type": annotation.type,
+            "points": annotation.points if hasattr(annotation, 'points') else None,  # Check if points exists
+        })
+    # print(f"shape: {annotation[0].mask.shape if annotation else 'No annotation found'}")
 
     # Instantiate and run inference
     image_size = (image.height, image.width)
@@ -161,9 +167,12 @@ def handler(context, event):
     context.user_data.model = model
 
     print("Trying model.infer")
-    results = model.infer(image, label_name)
+    results = model.infer(image, label_name, annotations_proc)
+
+    print(1/0)
 
     # Return CVAT‐compatible JSON
+    print("Returning results")
     return context.Response(
         body=json.dumps(results),
         headers={},

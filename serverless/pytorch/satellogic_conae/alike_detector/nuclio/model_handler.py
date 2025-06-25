@@ -35,11 +35,57 @@ def to_cvat_mask(box, mask_2d):
 
     return mask_flat
 
+def to_mask2d(cvat_mask):
+    """
+    Inverse of to_cvat_mask.
+
+    Parameters
+    ----------
+    cvat_mask : sequence of int
+        Flat list whose last four entries are [xtl, ytl, xbr, ybr]
+        and whose preceding entries are mask bits in row-major order.
+
+    Returns
+    -------
+    box : list of int
+        [xtl, ytl, w, h] with w = xbr - xtl, h = ybr - ytl
+    mask_2d : ndarray of shape (h, w), dtype uint8
+        Reconstructed 2D binary mask (0/1).
+    """
+    # ensure we have a mutable list of ints
+    data = list(map(int, cvat_mask))
+    # extract box coords
+    xtl, ytl, xbr, ybr = data[-4:]
+    w = xbr - xtl
+    h = ybr - ytl
+
+    # the rest are the mask bits
+    flat_mask = data[:-4]
+    if len(flat_mask) != h * w:
+        raise ValueError(f"Expected {h*w} mask bits, got {len(flat_mask)}")
+
+    # reshape back to 2D
+    mask_2d = np.array(flat_mask, dtype=np.uint8).reshape((h, w))
+
+    # return box in XYWH form plus the mask
+    return [xtl, ytl, w, h], mask_2d
+
+
+# embeddings_proc = []
+# for embedding in embeddings:
+#     embeddings_proc.append({
+#         "id": embedding.id,
+#         "type": embedding.points,
+#         "points": embedding.points if hasattr(embedding, 'points') else None,  # Check if points exists
+#     })
+
 class ModelHandler:
     def __init__(self, image_size: tuple):
         """
-        checkpoint: path to sam2 checkpoint (.pt)
-        image_size: (height, width) of expected input images
+        checkpoint:
+            Path to sam2 checkpoint (.pt)
+        image_size:
+            (height, width) of expected input images
         """
         self.image_h, self.image_w = image_size
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -155,7 +201,29 @@ class ModelHandler:
         print(f"Filtered out {count} segments without contours")
         return results, valid_indices
 
-    def infer(self, image, label: str):
+    def infer(self, image, label: str, annotations_proc: list[dict]):
+        """
+        Infer the model on the given image and return the results.
+
+        Parameters
+        ----------
+        image: PIL.Image
+            Input image to process
+        label: str
+            Label to assign to the detected objects
+        annotations_proc: list[dict]
+            List of preprocessed annotations from CVAT annotations
+            Each annotation is a dict with keys:
+                - "id": unique identifier for the embedding
+                - "type": type of the embedding (e.g., "mask", "polygon")
+                - "points": points of the embedding (rle mask)
+        """
+        # Get embeddings from CVAT annotations
+        print("Cantidad de annotations:", len(annotations_proc))
+
+
+        print(1/0)
+        # Preprocess the image
         img = np.array(image)
         self.mask_embeddings.clear()
         segments = self.mask_generator.generate(img)
