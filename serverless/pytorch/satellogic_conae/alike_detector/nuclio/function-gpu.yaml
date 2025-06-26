@@ -88,6 +88,12 @@ spec:
               huggingface_hub \
               cvat-sdk
 
+        # 4) DEBUG: Remove on production
+        - kind: RUN
+          value: |
+            pip install \
+              matplotlib
+
         # 5) Download the **SAM-2.1** Hiera-Large checkpoint
         - kind: RUN
           value: |

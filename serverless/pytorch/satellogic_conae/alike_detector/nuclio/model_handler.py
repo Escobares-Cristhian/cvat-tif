@@ -337,9 +337,6 @@ class ModelHandler:
         if global_emb is not None:
             global_emb = global_emb.detach().cpu().numpy()
         mask_embs = np.array(self.mask_embeddings)[valid_indices]
-        # DEBUG: uso el primer mask-token embedding de cada máscara. Y paso de (1, 256) -> (1, 256, 1, 1)
-        if len(mask_embs) > 0:
-            mask_embs = np.array([[emb[0].reshape(256,1,1)] for emb in mask_embs])
 
         print(f"shape mask_embs: {mask_embs.shape}")
 
@@ -352,10 +349,50 @@ class ModelHandler:
             mean_annot_emb = np.mean(np.array(self.annot_embeddings), axis=0)
             print(f"shape mean_annot_emb: {mean_annot_emb.shape}")
 
-        # Get global embedding of mask (WARNING):
+        # # Get global embedding of mask (WARNING):
+        # if len(mask_embs) > 0:
+        # # DEBUG: uso el primer mask-token embedding de cada máscara. Y paso de (1, 256) -> (1, 256, 1, 1)
+        #     mask_embs = np.array([[emb[0].reshape(256,1,1)] for emb in mask_embs])
+        #     mask_embs = np.array([global_emb * emb for emb in mask_embs])
+        #     print(f"shape mask_embs after global emb: {mask_embs.shape}")
+
+        # Get real embedding of masks:
         if len(mask_embs) > 0:
-            mask_embs = np.array([global_emb * emb for emb in mask_embs])
-            print(f"shape mask_embs after global emb: {mask_embs.shape}")
+            t1 = time.time()
+            mask_embs = [res["mask"] for res in results] # Extract binary masks and extent from the masks
+            extent_embs = [res[-4:] for res in mask_embs] # Extract extent from the masks
+            mask_embs = [np.array(emb[:-4]) for emb in mask_embs] # Remove extent from the masks
+
+            # # Convert CVAT mask to 2D mask and box
+            # x0, y0, w, h, mask_2d = rle_to_mask2d(annotation["points"])
+            # # Extract the region of interest from the image
+            # cut_image = full_image[y0:y0+h, x0:x0+w]                # Crop the image to the bounding box
+            # # cut_image = np.where(mask_2d[..., None], cut_image, 0)  # Apply the mask to the image
+            # cut_image = np.where(np.dstack([mask_2d.T]*3), cut_image, 0)  # Apply the mask to the image ->  (224,121,3) (121,224,3) error
+            # # DEBUG: En vez de "0", capaz conviene usar un número aleatorio para que SAM no detecte el fondo como un objeto
+
+            print(f"shape img: {img.shape}")
+            print(f"example extent_embs[0]: {extent_embs[0]}")
+            print(f"shape img cut test 0: {img[extent_embs[0][0]:extent_embs[0][2]+1, extent_embs[0][1]:extent_embs[0][3]+1, :].shape}")
+            print(f"shape embs reshape test 0: {mask_embs[0].reshape(extent_embs[0][2]-extent_embs[0][0]+1, extent_embs[0][3]-extent_embs[0][1]+1).shape}")
+            mask_embs = [
+                    img[e[1]:e[3]+1, e[0]:e[2]+1, :]
+                    * emb.reshape(e[3]-e[1]+1, e[2]-e[0]+1)[..., None]
+                    for emb, e in zip(mask_embs, extent_embs)]
+
+            t2 = time.time()
+            print(f"Mask embedding time: {t2 - t1:.4f} seconds")
+
+            import matplotlib.pyplot as plt
+            plt.imshow(mask_embs[0])
+            plt.savefig("mask_embs_0.png")
+            plt.close()
+
+            t1 = time.time()
+            mask_embs = [self.image_to_embedding(img_tmp).detach().cpu().numpy() for img_tmp in mask_embs]
+            t2 = time.time()
+            print(f"Mask embedding time (image_to_embedding): {t2 - t1:.4f} seconds")
+
 
         # Compare with annot_embeddings:
         if len(mask_embs) > 0:
@@ -363,12 +400,34 @@ class ModelHandler:
             sim_embs = np.array([
                 self.get_emb_similatiry(emb, mean_annot_emb) for emb in mask_embs
             ])
-            print(f"shape sim_embs[0]: {sim_embs[0].shape}")
-            highest_sim_index = np.argmax(sim_embs)
-            highest_sim_value = sim_embs[highest_sim_index]
-            print(f"Highest similarity index: {highest_sim_index}, value: {highest_sim_value:.4f}")
 
-            results = [results[highest_sim_index]]
+            # Imprimo histograma con las similitudes
+            import matplotlib.pyplot as plt
+            plt.hist(sim_embs, bins=50, alpha=0.7, color='blue')
+            plt.title('Histogram of Similarities')
+            plt.xlabel('Similarity')
+            plt.ylabel('Frequency')
+            plt.grid(True)
+            plt.savefig("similarities_histogram.png")
+            plt.close()
+
+            # # Select the highest similarity
+            # highest_sim_index = np.argmax(sim_embs)
+            # highest_sim_value = sim_embs[highest_sim_index]
+            # print(f"Highest similarity index: {highest_sim_index}, value: {highest_sim_value:.4f}")
+            # results = [results[highest_sim_index]]
+            # # Select 10 highest similarities
+            # highest_sim_indices = np.argsort(sim_embs)[-10:][::-1]
+            # print(f"Highest similarity indices: {highest_sim_indices}, values: {[sim_embs[i] for i in highest_sim_indices]}")
+            # Select similarity over 0.85
+            highest_sim_indices = np.where(sim_embs > 0.85)[0]
+            print(f"Similarities over 0.85 found: {len(highest_sim_indices)} out of {len(sim_embs)}")
+            print(f"Highest similarity indices: {highest_sim_indices}, values: {[sim_embs[i] for i in highest_sim_indices]}")
+            if len(highest_sim_indices) == 0:
+                print("No similarities over 0.85 found, returning empty results.")
+                return []
+
+            results = [results[i] for i in highest_sim_indices]
 
 
         return results#, global_emb, mask_embs
