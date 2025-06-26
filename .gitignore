@@ -69,3 +69,7 @@ cvat-core/reports
 
 # Ignore user/password files
 serverless/pytorch/satellogic_conae/alike_detector/nuclio/cvat_config.py
+
+# Ignore tmp files
+tmp.log
+_sam2_images_tmp
