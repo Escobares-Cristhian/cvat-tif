@@ -98,6 +98,7 @@ def get_annotations_from_cvat_annotations(task_id: int, frame_number: int, label
     return annotations
 
 def handler(context, event):
+    init_context(context)
     print("\nhandler executed")
     data = event.body
 
@@ -163,11 +164,21 @@ def handler(context, event):
     # Instantiate and run inference
     image_size = (image.height, image.width)
     print("Full image size:", image_size)
-    model = ModelHandler(image_size)
-    context.user_data.model = model
 
-    print("Trying model.infer")
-    results = model.infer(image, label_name, annotations_proc)
+
+    # Instantiate model once (and clear caches beforehand)
+    if not hasattr(context.user_data, "model"):
+        print("Loading SAM2 model for the first time…")
+        # reuse your existing init_context to drop GPU & CPU caches
+        init_context(context)
+        context.user_data.model = ModelHandler(image_size)
+    model = context.user_data.model
+    print("Reusing existing model instance")
+
+    # Run inference without building computation graphs
+    with torch.no_grad():
+        print("Running model.infer")
+        results = model.infer(image, label_name, annotations_proc)
 
     # Return CVAT‐compatible JSON
     print("Returning results")
