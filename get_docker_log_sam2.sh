@@ -20,9 +20,14 @@ docker logs "$CONTAINER_ID"
 
 # 4. optional: copy all .png from container’s cwd into ./_sam2_images_tmp
 if [[ "${1:-}" == "--copy-png" ]]; then
-  echo "Copying .png files from container to ./_sam2_images_tmp…"
+  echo "Removing previous contents of _sam2_images_tmp directory and subdirectory…"
+  rm -rf _sam2_images_tmp/
+
+  echo "Creating new _sam2_images_tmp directory…"
   mkdir -p _sam2_images_tmp
-  # Use docker exec + tar so we can grab multiple files in one go
+
+  echo "Copying .png files from container to ./_sam2_images_tmp…"
+    # Use docker exec + tar so we can grab multiple files in one go
   docker exec "$CONTAINER_ID" sh -c 'tar cf - /opt/nuclio/sam2/*.png 2>/dev/null || true' \
     | tar xf - -C _sam2_images_tmp
   echo "Done. Look in ./_sam2_images_tmp/"
