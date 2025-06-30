@@ -220,6 +220,33 @@ class ModelHandler:
             embedding = self.encoder.get_image_embedding()
         return embedding
 
+    def _image_to_embedding(self, image):
+        self.encoder.reset_predictor()
+        self.encoder.set_image(image)
+        embedding = self.encoder.get_image_embedding()
+        return embedding
+
+    def list_of_images_to_embeddings(self, images):
+        batch_size = 200
+        with torch.no_grad(): # disable gradients for image embeddings
+            for i in range(0, len(images), batch_size):
+                print(f"Processing images {i} to {i + batch_size} of {len(images)}")
+                # Define max index for the batch
+                i_max = i + batch_size
+                if i_max > len(images):
+                    i_max = len(images)
+                batch = images[i:i_max]
+
+                # Get embeddings for the batch
+                embeddings = [self._image_to_embedding(img).detach().cpu().numpy() for img in batch]
+
+                # Concatenate embeddings
+                if i == 0:
+                    all_embeddings = embeddings
+                else:
+                    all_embeddings = np.concatenate((all_embeddings, embeddings), axis=0)
+        return all_embeddings
+
     def annotations_to_embeddings(self, full_image, annotations):
         embeddings = []
         for index, annotation in enumerate(annotations):
@@ -299,6 +326,28 @@ class ModelHandler:
         # finally, collapse to a single score
         return float(np.median(cos_map))
 
+    def get_iou(self, mask1, mask2):
+        """
+        Calculate the Intersection over Union (IoU) between two binary masks.
+
+        Parameters
+        ----------
+        mask1: np.ndarray
+            First binary mask (2D array)
+        mask2: np.ndarray
+            Second binary mask (2D array)
+
+        Returns
+        -------
+        float
+            IoU score between the two masks
+        """
+        intersection = np.logical_and(mask1, mask2).sum()
+        union = np.logical_or(mask1, mask2).sum()
+        if union == 0:
+            return 0.0
+        return intersection / union
+
     def infer(self, image, label: str, annotations_proc: list[dict]):
         """
         Infer the model on the given image and return the results.
@@ -330,6 +379,16 @@ class ModelHandler:
             print("No se han proporcionado anotaciones para obtener embeddings.")
             self.annot_embeddings = []
 
+        # Get shapes from annotations
+        shapes_annot = []
+        for annotation in annotations_proc:
+            if str(annotation["type"]) != "mask":
+                raise ValueError(f"Unsupported annotation type: {annotation['type']}. Only 'mask' is supported.")
+            xtl, ytl, xbr, ybr = map(int, annotation["points"][-4:])
+            h = ybr - ytl + 1
+            w = xbr - xtl + 1
+            shapes_annot.append((h, w))
+
         # Process the image with the mask generator
         with torch.no_grad(): # disable gradients for mask generation
             self.mask_embeddings.clear()
@@ -345,31 +404,51 @@ class ModelHandler:
         if global_emb is not None:
             global_emb = global_emb.detach().cpu().numpy()
         mask_embs = np.array(self.mask_embeddings)[valid_indices]
-
         print(f"shape mask_embs: {mask_embs.shape}")
 
-        print("shape:")
-        print("Embedding global:", None if global_emb is None else global_emb.shape)
-        print("Embeddings de máscaras:", mask_embs.shape)
+        # Pre-process mask_embs
+        if len(mask_embs) > 0:
+            mask_embs = [res["mask"] for res in results] # Extract binary masks and extent from the masks
+            extent_embs = [res[-4:] for res in mask_embs] # Extract extent from the masks
+            mask_embs = [np.array(emb[:-4]) for emb in mask_embs] # Remove extent from the masks
+
+        # Filter by area threshold
+        area_max_annot = max(h*w for h, w in shapes_annot)
+        area_min_annot = min(h*w for h, w in shapes_annot)
+        print(f"Max area from annotations: {area_max_annot:.2f}")
+        print(f"Min area from annotations: {area_min_annot:.2f}")
+        area_max_mask = area_max_annot * (3*3)      # 3 times larger per side
+        area_min_mask = area_min_annot * (1/3*1/3)  # 3 times smaller per side
+
+        print(f"Before filtering, mask embeddings count: {len(mask_embs)}")
+        # mask_embs = np.array([
+        #     # emb for emb in mask_embs if np.prod(emb.shape) <= area_max_mask
+        #     emb for emb in mask_embs if (
+        #         np.prod(emb.shape) <= area_max_mask
+        #         and np.prod(emb.shape) >= area_min_mask
+        #     )
+        # ])
+        index_to_keep = [
+            i for i, extent in enumerate(extent_embs) if (
+            (extent[2] - extent[0] + 1) * (extent[3] - extent[1] + 1) <= area_max_mask
+            and (extent[2] - extent[0] + 1) * (extent[3] - extent[1] + 1) >= area_min_mask
+            )
+        ]
+
+        mask_embs = [mask_embs[i] for i in index_to_keep]
+        extent_embs = [extent_embs[i] for i in index_to_keep]
+        print(f"Filtered mask embeddings by area threshold: {len(mask_embs)} remaining")
 
         # Get mean annot_embeddings:
         if len(self.annot_embeddings) > 0:
             mean_annot_emb = np.mean(np.array(self.annot_embeddings), axis=0)
             print(f"shape mean_annot_emb: {mean_annot_emb.shape}")
 
-        # # Get global embedding of mask (WARNING):
-        # if len(mask_embs) > 0:
-        # # DEBUG: uso el primer mask-token embedding de cada máscara. Y paso de (1, 256) -> (1, 256, 1, 1)
-        #     mask_embs = np.array([[emb[0].reshape(256,1,1)] for emb in mask_embs])
-        #     mask_embs = np.array([global_emb * emb for emb in mask_embs])
-        #     print(f"shape mask_embs after global emb: {mask_embs.shape}")
+
 
         # Get real embedding of masks:
         if len(mask_embs) > 0:
             t1 = time.time()
-            mask_embs = [res["mask"] for res in results] # Extract binary masks and extent from the masks
-            extent_embs = [res[-4:] for res in mask_embs] # Extract extent from the masks
-            mask_embs = [np.array(emb[:-4]) for emb in mask_embs] # Remove extent from the masks
 
             # # Convert CVAT mask to 2D mask and box
             # x0, y0, w, h, mask_2d = rle_to_mask2d(annotation["points"])
@@ -410,8 +489,18 @@ class ModelHandler:
                 plt.savefig(f"mask_embs_{i}.png")
                 plt.close()
 
+            # # Make dim with 'real id', with the same 'real id' all the objects that IOU_threshold is greater than 0.5
+            # real_ids = []       # len(real_ids) == len(mask_embs)
+            # for id1, mask1 in enumerate(mask_embs):
+            #     for id2, mask2 in enumerate(mask_embs):
+            #         if id2 <= id1:
+            #             continue
+            #         iou = self.get_iou(mask1, mask2)
+            #         if iou > 0.5:
+
             t1 = time.time()
-            mask_embs = [self.image_to_embedding(img_tmp).detach().cpu().numpy() for img_tmp in mask_embs]
+            # Hacer esto más eficiente con la RAM:
+            mask_embs = self.list_of_images_to_embeddings(mask_embs)
             t2 = time.time()
             print(f"Mask embedding time (image_to_embedding): {t2 - t1:.4f} seconds")
 
@@ -436,11 +525,18 @@ class ModelHandler:
             sorted_indices = np.argsort(sim_embs)[::-1]
             results = [results[i] for i in sorted_indices]
 
-            # DEBUG: Filter by IOU later to avoid multiple selections of the same object
-
             # Select the 100 highest similarity indices
             highest_sim_indices = np.arange(len(sim_embs))[:100] if len(sim_embs) > 100 else np.arange(len(sim_embs))
+        else:
+            print("Esto no debería pasar, pero no se han generado embeddings de máscaras.")
+            print(1/0)
 
+
+
+
+
+
+            # Select the objects with the highest similarity of each 'real id'
 
             results = [results[i] for i in highest_sim_indices]
 

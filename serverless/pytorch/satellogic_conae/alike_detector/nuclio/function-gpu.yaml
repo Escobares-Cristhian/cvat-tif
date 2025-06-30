@@ -20,7 +20,7 @@ spec:
   description: Text‐prompted segmentation detector using SAM 2
   runtime: 'python:3.10'
   handler: main:handler
-  eventTimeout: 1200s
+  eventTimeout: 3600s
 
   env:
     - name: PYTHONPATH
@@ -105,7 +105,7 @@ spec:
     httpTrigger:
       kind: http
       maxWorkers: 4
-      workerAvailabilityTimeoutMilliseconds: 30000
+      workerAvailabilityTimeoutMilliseconds: 3600000 # 60 minutes
       attributes:
         contextPath: /
         maxRequestBodySize: 1048576000  # 1000 MB
