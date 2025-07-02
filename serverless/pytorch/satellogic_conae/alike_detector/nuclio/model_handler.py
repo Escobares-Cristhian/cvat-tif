@@ -256,7 +256,8 @@ class ModelHandler:
             x0, y0, w, h, mask_2d = rle_to_mask2d(annotation["points"])
             # Extract the region of interest from the image
             cut_image = full_image[y0:y0+w, x0:x0+h]                # Crop the image to the bounding box
-            cut_image = np.where(np.dstack([mask_2d]*3), cut_image, np.clip(np.uint8(0.8*cut_image), 0, 255))  # Apply the mask to the image ->  (224,121,3) (121,224,3) error
+            # cut_image = np.where(np.dstack([mask_2d]*3), cut_image, np.clip(np.uint8(0.8*cut_image), 0, 255))  # Apply the mask to the image ->  (224,121,3) (121,224,3) error
+            cut_image = np.where(np.dstack([mask_2d]*3), cut_image, cut_image)  # Apply the mask to the image ->  (224,121,3) (121,224,3) error
             # DEBUG: En vez de "0", capaz conviene usar un número aleatorio para que SAM no detecte el fondo como un objeto
 
             plt.imshow(cut_image)
@@ -417,8 +418,10 @@ class ModelHandler:
         area_min_annot = min(h*w for h, w in shapes_annot)
         print(f"Max area from annotations: {area_max_annot:.2f}")
         print(f"Min area from annotations: {area_min_annot:.2f}")
-        area_max_mask = area_max_annot * (3*3)      # 3 times larger per side
-        area_min_mask = area_min_annot * (1/3*1/3)  # 3 times smaller per side
+        # area_max_mask = area_max_annot * (3*3)      # 3 times larger per side
+        # area_min_mask = area_min_annot * (1/3*1/3)  # 3 times smaller per side
+        area_max_mask = area_max_annot * (1*1)      # 3 times larger per side
+        area_min_mask = area_min_annot * (0.5*0.5)  # 3 times smaller per side
 
         print(f"Before filtering, mask embeddings count: {len(mask_embs)}")
         # mask_embs = np.array([
@@ -474,10 +477,16 @@ class ModelHandler:
 
             masks_2d = [emb.reshape( e[3]-e[1]+1, e[2]-e[0]+1) for emb, e in zip(mask_embs, extent_embs)]
             cut_images = [img[e[1]:e[3]+1, e[0]:e[2]+1, :] for e in extent_embs]
+            # mask_embs = [
+            #     np.where(np.dstack([mask_2d]*3),
+            #              cut_image,
+            #              np.clip(np.uint8(0.8*cut_image), 0, 255))
+            #     for mask_2d, cut_image in zip(masks_2d, cut_images)
+            # ]
             mask_embs = [
                 np.where(np.dstack([mask_2d]*3),
                          cut_image,
-                         np.clip(np.uint8(0.8*cut_image), 0, 255))
+                         cut_image)
                 for mask_2d, cut_image in zip(masks_2d, cut_images)
             ]
 
@@ -500,13 +509,13 @@ class ModelHandler:
 
             t1 = time.time()
             # Hacer esto más eficiente con la RAM:
-            mask_embs = self.list_of_images_to_embeddings(mask_embs)
+            mask_embs = self.list_of_images_to_embeddings(mask_embs[:900]) # DEBUG: Selecciono los 900 primeros
+            # mask_embs = self.list_of_images_to_embeddings(mask_embs) # DEBUG: Selecciono los 900 primeros
             t2 = time.time()
             print(f"Mask embedding time (image_to_embedding): {t2 - t1:.4f} seconds")
 
 
-        # Compare with annot_embeddings:
-        if len(mask_embs) > 0:
+            # Compare with annot_embeddings:
             print(f"shape mask_embs[0]: {mask_embs[0].shape}")
             sim_embs = np.array([
                 self.get_emb_similatiry(emb, mean_annot_emb) for emb in mask_embs
@@ -522,28 +531,16 @@ class ModelHandler:
             plt.close()
 
             # Sort results by similarity
-            sorted_indices = np.argsort(sim_embs)[::-1]
+            sorted_indices = np.argsort(sim_embs) #[::-1]
             results = [results[i] for i in sorted_indices]
 
             # Select the 100 highest similarity indices
-            highest_sim_indices = np.arange(len(sim_embs))[:100] if len(sim_embs) > 100 else np.arange(len(sim_embs))
-        else:
-            print("Esto no debería pasar, pero no se han generado embeddings de máscaras.")
-            print(1/0)
+            results = results[:100] if len(results) > 100 else results
 
 
+        print(f"Final results count: {len(results)}")
 
-
-
-
-            # Select the objects with the highest similarity of each 'real id'
-
-            results = [results[i] for i in highest_sim_indices]
-
-
-
-
-        return results#, global_emb, mask_embs
+        return results
 
 
 # from segment_anything import sam_model_registry, SamPredictor
