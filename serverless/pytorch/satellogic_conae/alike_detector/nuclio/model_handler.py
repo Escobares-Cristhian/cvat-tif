@@ -413,30 +413,55 @@ class ModelHandler:
             extent_embs = [res[-4:] for res in mask_embs] # Extract extent from the masks
             mask_embs = [np.array(emb[:-4]) for emb in mask_embs] # Remove extent from the masks
 
-        # Filter by area threshold
+        # ----- Filter by side threshold -----
+        hw_max_annot = np.array(shapes_annot).max(axis=0)
+        hw_min_annot = np.array(shapes_annot).min(axis=0)
+        print(f"Max side from annotations: ({hw_max_annot[0]:.2f}, {hw_max_annot[1]:.2f})")
+        print(f"Min side from annotations: ({hw_min_annot[0]:.2f}, {hw_min_annot[1]:.2f})")
+
+        hw_max_mask = hw_max_annot * 1.0  # 1.5 times larger per side
+        hw_min_mask = hw_min_annot * 0.5  # 2 times smaller per side
+
+        index_to_keep = [
+            i for i, extent in enumerate(extent_embs) if (
+            (extent[2] - extent[0] + 1) <= hw_max_mask[1]
+            and (extent[3] - extent[1] + 1) <= hw_max_mask[0]
+            and (extent[2] - extent[0] + 1) >= hw_min_mask[1]
+            and (extent[3] - extent[1] + 1) >= hw_min_mask[0]
+            )
+        ]
+
+        mask_embs = [mask_embs[i] for i in index_to_keep]
+        extent_embs = [extent_embs[i] for i in index_to_keep]
+        print(f"Filtered mask embeddings by side threshold: {len(mask_embs)} remaining")
+
+        # ----- Filter by area threshold -----
         area_max_annot = max(h*w for h, w in shapes_annot)
         area_min_annot = min(h*w for h, w in shapes_annot)
         print(f"Max area from annotations: {area_max_annot:.2f}")
         print(f"Min area from annotations: {area_min_annot:.2f}")
         # area_max_mask = area_max_annot * (3*3)      # 3 times larger per side
         # area_min_mask = area_min_annot * (1/3*1/3)  # 3 times smaller per side
-        area_max_mask = area_max_annot * (1*1)      # 3 times larger per side
-        area_min_mask = area_min_annot * (0.5*0.5)  # 3 times smaller per side
+        area_max_mask = area_max_annot * 1      # 3 times larger per side
+        area_min_mask = area_min_annot * 0.5  # 3 times smaller per side
+        print(f"Max area for mask embeddings: {area_max_mask:.2f}")
+        print(f"Min area for mask embeddings: {area_min_mask:.2f}")
 
         print(f"Before filtering, mask embeddings count: {len(mask_embs)}")
-        # mask_embs = np.array([
-        #     # emb for emb in mask_embs if np.prod(emb.shape) <= area_max_mask
-        #     emb for emb in mask_embs if (
-        #         np.prod(emb.shape) <= area_max_mask
-        #         and np.prod(emb.shape) >= area_min_mask
-        #     )
-        # ])
         index_to_keep = [
             i for i, extent in enumerate(extent_embs) if (
-            (extent[2] - extent[0] + 1) * (extent[3] - extent[1] + 1) <= area_max_mask
-            and (extent[2] - extent[0] + 1) * (extent[3] - extent[1] + 1) >= area_min_mask
+            ((extent[2] - extent[0] + 1) * (extent[3] - extent[1] + 1) <= area_max_mask)
+            and ((extent[2] - extent[0] + 1) * (extent[3] - extent[1] + 1) >= area_min_mask)
             )
         ]
+
+        # DEBUG:
+        for i, extent in enumerate(extent_embs):
+            lado_x = extent[2] - extent[0] + 1
+            lado_y = extent[3] - extent[1] + 1
+            area = lado_x * lado_y
+            print(f"Mask {i}: extent: {extent}, area: {area:.2f}, "
+                  f"lado_x: {lado_x:.2f}, lado_y: {lado_y:.2f}")
 
         mask_embs = [mask_embs[i] for i in index_to_keep]
         extent_embs = [extent_embs[i] for i in index_to_keep]
@@ -446,7 +471,6 @@ class ModelHandler:
         if len(self.annot_embeddings) > 0:
             mean_annot_emb = np.mean(np.array(self.annot_embeddings), axis=0)
             print(f"shape mean_annot_emb: {mean_annot_emb.shape}")
-
 
 
         # Get real embedding of masks:
@@ -509,8 +533,12 @@ class ModelHandler:
 
             t1 = time.time()
             # Hacer esto más eficiente con la RAM:
-            mask_embs = self.list_of_images_to_embeddings(mask_embs[:900]) # DEBUG: Selecciono los 900 primeros
-            # mask_embs = self.list_of_images_to_embeddings(mask_embs) # DEBUG: Selecciono los 900 primeros
+            if len(mask_embs) > 900:  # DEBUG: Selecciono los 900 primeros
+                print(f"Reducing mask embeddings to 900 samples for performance reasons.")
+                mask_embs = self.list_of_images_to_embeddings(mask_embs[:900])
+            else:
+                print(f"Using all {len(mask_embs)} mask embeddings.")
+                mask_embs = self.list_of_images_to_embeddings(mask_embs)
             t2 = time.time()
             print(f"Mask embedding time (image_to_embedding): {t2 - t1:.4f} seconds")
 
