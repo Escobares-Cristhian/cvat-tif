@@ -247,6 +247,68 @@ class ModelHandler:
                     all_embeddings = np.concatenate((all_embeddings, embeddings), axis=0)
         return all_embeddings
 
+    def squared_image_centered(self, full_image, e, delta=0.1):
+        delta = 0.1  # 30% More extent each side
+
+        # Calculate raw bounding box coordinates
+        y_min = max(0, e[1]-int(delta*(e[3]-e[1]+1)))
+        y_max = min(full_image.shape[0], e[3]+int(delta*(e[3]-e[1]+1))+1)
+        x_min = max(0, e[0]-int(delta*(e[2]-e[0]+1)))
+        x_max = min(full_image.shape[1], e[2]+int(delta*(e[2]-e[0]+1))+1)
+
+        # Calculare squared bounding box
+        h = y_max - y_min
+        w = x_max - x_min
+
+        l = max(h, w)  # Side length of the square
+
+        # Adjust x
+        x_min = x_min - (l - w) // 2
+        x_max = x_min + l
+
+        d_x_min = max(0, -x_min)  # Get excedent
+        d_x_max = max(0, x_max - full_image.shape[1])  # Get excedent
+
+        if d_x_min > 0 and d_x_max > 0:
+            x_min = 0
+            x_max = full_image.shape[1]  # Adjust to full width
+        elif d_x_min > 0:
+            x_min += d_x_min  # Adjust x_min if excedent
+            x_max += d_x_min  # Adjust x_max if excedent
+        elif d_x_max > 0:
+            x_min -= d_x_max
+            x_max -= d_x_max
+
+        # Adjust y
+        y_min = y_min - (l - h) // 2
+        y_max = y_min + l
+        d_y_min = max(0, -y_min)  # Get excedent
+        d_y_max = max(0, y_max - full_image.shape[0])  # Get excedent
+        if d_y_min > 0 and d_y_max > 0:
+            y_min = 0
+            y_max = full_image.shape[0]  # Adjust to full height
+        elif d_y_min > 0:
+            y_min += d_y_min
+            y_max += d_y_min  # Adjust y_max if excedent
+        elif d_y_max > 0:
+            y_min -= d_y_max
+            y_max -= d_y_max
+
+        # Final check for bounds
+        if x_min < 0:
+            raise ValueError(f"x_min is negative: {x_min}")
+        if x_max > full_image.shape[1]:
+            raise ValueError(f"x_max exceeds image width: {x_max} > {full_image.shape[1]}")
+        if y_min < 0:
+            raise ValueError(f"y_min is negative: {y_min}")
+        if y_max > full_image.shape[0]:
+            raise ValueError(f"y_max exceeds image height: {y_max} > {full_image.shape[0]}")
+
+        # Crop the image to the squared bounding box
+        cut_image = full_image[y_min:y_max, x_min:x_max, :]
+
+        return cut_image
+
     def annotations_to_embeddings(self, full_image, annotations):
         embeddings = []
         for index, annotation in enumerate(annotations):
@@ -255,10 +317,20 @@ class ModelHandler:
             # Convert CVAT mask to 2D mask and box
             x0, y0, w, h, mask_2d = rle_to_mask2d(annotation["points"])
             # Extract the region of interest from the image
-            cut_image = full_image[y0:y0+w, x0:x0+h]                # Crop the image to the bounding box
-            # cut_image = np.where(np.dstack([mask_2d]*3), cut_image, np.clip(np.uint8(0.8*cut_image), 0, 255))  # Apply the mask to the image ->  (224,121,3) (121,224,3) error
-            cut_image = np.where(np.dstack([mask_2d]*3), cut_image, cut_image)  # Apply the mask to the image ->  (224,121,3) (121,224,3) error
-            # DEBUG: En vez de "0", capaz conviene usar un número aleatorio para que SAM no detecte el fondo como un objeto
+            # cut_image = full_image[y0:y0+w, x0:x0+h]                # Crop the image to the bounding box
+            e = [x0, y0, x0 + h, y0 + w]
+            # delta = 0.1  # 30% More extent each side
+            # cut_image = full_image[
+            #         max(0, e[1]-int(delta*(e[3]-e[1]+1))):min(full_image.shape[0], e[3]+int(delta*(e[3]-e[1]+1))+1),
+            #         max(0, e[0]-int(delta*(e[2]-e[0]+1))):min(full_image.shape[1], e[2]+int(delta*(e[2]-e[0]+1))+1),
+            #         :
+            # ]
+            cut_image = self.squared_image_centered(full_image, e)
+
+
+            # # cut_image = np.where(np.dstack([mask_2d]*3), cut_image, np.clip(np.uint8(0.8*cut_image), 0, 255))  # Apply the mask to the image ->  (224,121,3) (121,224,3) error
+            # cut_image = np.where(np.dstack([mask_2d]*3), cut_image, cut_image)  # Apply the mask to the image ->  (224,121,3) (121,224,3) error
+            # # DEBUG: En vez de "0", capaz conviene usar un número aleatorio para que SAM no detecte el fondo como un objeto
 
             plt.imshow(cut_image)
             plt.title(f"Annotation Example: ix-{index}, id-{annotation['id']}")
@@ -455,22 +527,14 @@ class ModelHandler:
             )
         ]
 
-        # DEBUG:
-        for i, extent in enumerate(extent_embs):
-            lado_x = extent[2] - extent[0] + 1
-            lado_y = extent[3] - extent[1] + 1
-            area = lado_x * lado_y
-            print(f"Mask {i}: extent: {extent}, area: {area:.2f}, "
-                  f"lado_x: {lado_x:.2f}, lado_y: {lado_y:.2f}")
-
         mask_embs = [mask_embs[i] for i in index_to_keep]
         extent_embs = [extent_embs[i] for i in index_to_keep]
         print(f"Filtered mask embeddings by area threshold: {len(mask_embs)} remaining")
 
-        # Get mean annot_embeddings:
-        if len(self.annot_embeddings) > 0:
-            mean_annot_emb = np.mean(np.array(self.annot_embeddings), axis=0)
-            print(f"shape mean_annot_emb: {mean_annot_emb.shape}")
+        # # Get mean annot_embeddings:
+        # if len(self.annot_embeddings) > 0:
+        #     mean_annot_emb = np.mean(np.array(self.annot_embeddings), axis=0)
+        #     print(f"shape mean_annot_emb: {mean_annot_emb.shape}")
 
 
         # Get real embedding of masks:
@@ -500,19 +564,29 @@ class ModelHandler:
             #         for emb, e in zip(mask_embs, extent_embs)]
 
             masks_2d = [emb.reshape( e[3]-e[1]+1, e[2]-e[0]+1) for emb, e in zip(mask_embs, extent_embs)]
-            cut_images = [img[e[1]:e[3]+1, e[0]:e[2]+1, :] for e in extent_embs]
+            # cut_images = [img[e[1]:e[3]+1, e[0]:e[2]+1, :] for e in extent_embs]
+            delta = 0.1  # 30% More extent each side
+            # mask_embs = [
+            #     img[
+            #         max(0, e[1]-int(delta*(e[3]-e[1]+1))):min(img.shape[0], e[3]+int(delta*(e[3]-e[1]+1))+1),
+            #         max(0, e[0]-int(delta*(e[2]-e[0]+1))):min(img.shape[1], e[2]+int(delta*(e[2]-e[0]+1))+1),
+            #         :
+            #     ] for e in extent_embs
+            # ]
+            mask_embs = [self.squared_image_centered(img, e) for e in extent_embs]
+
             # mask_embs = [
             #     np.where(np.dstack([mask_2d]*3),
             #              cut_image,
             #              np.clip(np.uint8(0.8*cut_image), 0, 255))
             #     for mask_2d, cut_image in zip(masks_2d, cut_images)
             # ]
-            mask_embs = [
-                np.where(np.dstack([mask_2d]*3),
-                         cut_image,
-                         cut_image)
-                for mask_2d, cut_image in zip(masks_2d, cut_images)
-            ]
+            # mask_embs = [
+            #     np.where(np.dstack([mask_2d]*3),
+            #              cut_image,
+            #              cut_image)
+            #     for mask_2d, cut_image in zip(masks_2d, cut_images)
+            # ]
 
             t2 = time.time()
             print(f"Mask embedding time: {t2 - t1:.4f} seconds")
@@ -522,14 +596,14 @@ class ModelHandler:
                 plt.savefig(f"mask_embs_{i}.png")
                 plt.close()
 
-            # # Make dim with 'real id', with the same 'real id' all the objects that IOU_threshold is greater than 0.5
-            # real_ids = []       # len(real_ids) == len(mask_embs)
-            # for id1, mask1 in enumerate(mask_embs):
-            #     for id2, mask2 in enumerate(mask_embs):
-            #         if id2 <= id1:
-            #             continue
-            #         iou = self.get_iou(mask1, mask2)
-            #         if iou > 0.5:
+            # # # Make dim with 'real id', with the same 'real id' all the objects that IOU_threshold is greater than 0.5
+            # # real_ids = []       # len(real_ids) == len(mask_embs)
+            # # for id1, mask1 in enumerate(mask_embs):
+            # #     for id2, mask2 in enumerate(mask_embs):
+            # #         if id2 <= id1:
+            # #             continue
+            # #         iou = self.get_iou(mask1, mask2)
+            # #         if iou > 0.5:
 
             t1 = time.time()
             # Hacer esto más eficiente con la RAM:
@@ -543,23 +617,92 @@ class ModelHandler:
             print(f"Mask embedding time (image_to_embedding): {t2 - t1:.4f} seconds")
 
 
-            # Compare with annot_embeddings:
-            print(f"shape mask_embs[0]: {mask_embs[0].shape}")
-            sim_embs = np.array([
-                self.get_emb_similatiry(emb, mean_annot_emb) for emb in mask_embs
-            ])
+            # # Compare with annot_embeddings:
+            # print(f"shape mask_embs[0]: {mask_embs[0].shape}")
+            # sim_embs = np.array([
+            #     self.get_emb_similatiry(emb, mean_annot_emb) for emb in mask_embs
+            # ])
+            annot_embeddings = np.array(self.annot_embeddings)
+            mask_embs = np.array(mask_embs)
+            print(f"shape mask_embs: {mask_embs.shape}")
+            print(f"annot_embeddings shape: {annot_embeddings.shape}")
 
-            # Imprimo histograma con las similitudes
-            plt.hist(sim_embs, bins=50, alpha=0.7, color='blue')
-            plt.title('Histogram of Similarities')
-            plt.xlabel('Similarity')
-            plt.ylabel('Frequency')
-            plt.grid(True)
-            plt.savefig("similarities_histogram.png")
-            plt.close()
+            # Average from:
+            #                   Dims    0   1   2    3   4
+            # shape mask_embs:        (455, 1, 256, 64, 64) -> (455, 256)
+            # shape annot_embeddings: (x,   1, 256, 64, 64) -> (x, 256)
+            mask_embs = np.mean(mask_embs, axis=(1, 3, 4))
+            annot_embeddings = np.mean(annot_embeddings, axis=(1, 3, 4))
+
+            # # Average from:
+            # #                   Dims    0   1   2    3   4
+            # # shape mask_embs:        (455, 1, 256, 64, 64) -> (455, 256, 16, 16)
+            # # shape annot_embeddings: (x,   1, 256, 64, 64) -> (x, 256, 16, 16)
+            # # def block_avg_4x4(tensor):
+            # #     # tensor: (N, 1, C, 64, 64) -> returns (N, C, 16, 16)
+            # #     # 1) drop the singleton dim
+            # #     t = tensor.squeeze(1)            # (N, C, 64, 64)
+            # #     N, C, H, W = t.shape
+            # #     # 2) reshape to group 4×4 blocks
+            # #     t = t.reshape(N, C, H//4, 4, W//4, 4)  # (N, C, 16, 4, 16, 4)
+            # #     # 3) average over the within‐block axes
+            # #     return t.mean(axis=(3, 5))       # (N, C, 16, 16)
+            # def block_avg_8x8(tensor):
+            #     # tensor: (N, 1, C, 64, 64) -> returns (N, C, 8, 8)
+            #     # 1) drop the singleton dim
+            #     t = tensor.squeeze(1)            # (N, C, 64, 64)
+            #     N, C, H, W = t.shape
+            #     # 2) reshape to group 8×8 blocks
+            #     t = t.reshape(N, C, H//8, 8, W//8, 8)  # (N, C, 8, 8, 8, 8)
+            #     # 3) average over the within‐block axes
+            #     return t.mean(axis=(3, 5))       # (N, C, 8, 8)
+
+            # mask_embs = block_avg_8x8(mask_embs)                # -> (455, 256, 8, 8)
+            # annot_embeddings = block_avg_8x8(annot_embeddings)  # -> (x, 256, 8, 8)
+
+            # # Flatten
+            # mask_embs = mask_embs.reshape(mask_embs.shape[0], -1)  # -> (455, 256*8*8)
+            # annot_embeddings = annot_embeddings.reshape(annot_embeddings.shape[0], -1)  # -> (x, 256*8*8)
+
+            print(f"shape mask_embs: {mask_embs.shape}")
+            print(f"annot_embeddings shape: {annot_embeddings.shape}")
+
+
+            from sklearn.neighbors import NearestNeighbors
+
+            t1 = time.time()
+            nn = NearestNeighbors(n_neighbors=1, metric='euclidean')
+            nn.fit(annot_embeddings)
+
+            # mask_embs: (n,256) array of your big collection
+            distances, q_idx = nn.kneighbors(mask_embs)
+            # distances.shape  == (n,1) -> (n)
+            # q_idx.shape      == (n,1) -> (n)
+            q_idx = q_idx.flatten()
+            distances = distances.flatten()
+
+            # # filter out the X’s that are too far from any Q
+            # epsilon = 0.1
+            # mask = distances.flatten() < epsilon
+            # X_filtered = mask_embs[mask]
+            # q_idx_filtered = q_idx[mask]
+
+            t2 = time.time()
+            print(f"Nearest Neighbors time: {t2 - t1:.4f} seconds")
+            # 3a) If you just want **one flat array** of all X “in Q” (within ε):
+            sorted_indices = np.argsort(distances)
+
+            # # Imprimo histograma con las similitudes
+            # plt.hist(sim_embs, bins=50, alpha=0.7, color='blue')
+            # plt.title('Histogram of Similarities')
+            # plt.xlabel('Similarity')
+            # plt.ylabel('Frequency')
+            # plt.grid(True)
+            # plt.savefig("similarities_histogram.png")
+            # plt.close()
 
             # Sort results by similarity
-            sorted_indices = np.argsort(sim_embs) #[::-1]
+            # sorted_indices = np.argsort(sim_embs) #[::-1]
             results = [results[i] for i in sorted_indices]
 
             # Select the 100 highest similarity indices

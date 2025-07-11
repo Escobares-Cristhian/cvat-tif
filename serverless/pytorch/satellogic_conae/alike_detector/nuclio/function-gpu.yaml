@@ -84,6 +84,7 @@ spec:
             pip install \
               opencv-python-headless \
               numpy \
+              scikit-learn \
               scikit-image \
               huggingface_hub \
               cvat-sdk
