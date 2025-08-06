@@ -247,14 +247,28 @@ class ModelHandler:
                     all_embeddings = np.concatenate((all_embeddings, embeddings), axis=0)
         return all_embeddings
 
-    def squared_image_centered(self, full_image, e, delta=0.1):
-        delta = 0.1  # 30% More extent each side
+    def squared_image_centered(self, full_image_in, e, mask, delta=0.1):
+        # Calculate raw bounding box coordinates
+        y_min = e[1]
+        y_max = e[3]
+        x_min = e[0]
+        x_max = e[2]
+
+        # Calculating full mask
+        full_mask = np.zeros((full_image_in.shape[0], full_image_in.shape[1]), dtype=np.uint8)
+        try:
+            full_mask[y_min:y_max, x_min:x_max] = mask
+        except:
+            raise ValueError(f"Error applying mask to full image: mask = {mask.shape} vs full_mask[y_min:y_max, x_min:x_max] = {full_mask[y_min:y_max, x_min:x_max].shape}")
+
+        # Apply the mask to the full image
+        full_image = np.where(np.dstack([full_mask]*3), full_image_in, 0)  # Apply the mask to the image
 
         # Calculate raw bounding box coordinates
         y_min = max(0, e[1]-int(delta*(e[3]-e[1]+1)))
-        y_max = min(full_image.shape[0], e[3]+int(delta*(e[3]-e[1]+1))+1)
+        y_max = min(full_image_in.shape[0], e[3]+int(delta*(e[3]-e[1]+1))+1)
         x_min = max(0, e[0]-int(delta*(e[2]-e[0]+1)))
-        x_max = min(full_image.shape[1], e[2]+int(delta*(e[2]-e[0]+1))+1)
+        x_max = min(full_image_in.shape[1], e[2]+int(delta*(e[2]-e[0]+1))+1)
 
         # Calculare squared bounding box
         h = y_max - y_min
@@ -325,7 +339,7 @@ class ModelHandler:
             #         max(0, e[0]-int(delta*(e[2]-e[0]+1))):min(full_image.shape[1], e[2]+int(delta*(e[2]-e[0]+1))+1),
             #         :
             # ]
-            cut_image = self.squared_image_centered(full_image, e)
+            cut_image = self.squared_image_centered(full_image, e, mask_2d)
 
 
             # # cut_image = np.where(np.dstack([mask_2d]*3), cut_image, np.clip(np.uint8(0.8*cut_image), 0, 255))  # Apply the mask to the image ->  (224,121,3) (121,224,3) error
@@ -563,7 +577,7 @@ class ModelHandler:
             #             ), 0, 255)
             #         for emb, e in zip(mask_embs, extent_embs)]
 
-            masks_2d = [emb.reshape( e[3]-e[1]+1, e[2]-e[0]+1) for emb, e in zip(mask_embs, extent_embs)]
+            masks_2d = [emb.reshape(e[3]-e[1]+1, e[2]-e[0]+1) for emb, e in zip(mask_embs, extent_embs)]
             # cut_images = [img[e[1]:e[3]+1, e[0]:e[2]+1, :] for e in extent_embs]
             delta = 0.1  # 30% More extent each side
             # mask_embs = [
@@ -573,7 +587,11 @@ class ModelHandler:
             #         :
             #     ] for e in extent_embs
             # ]
-            mask_embs = [self.squared_image_centered(img, e) for e in extent_embs]
+            # mask_embs = [self.squared_image_centered(img, e) for e in extent_embs]
+            mask_embs = [
+                self.squared_image_centered(img, [e[0], e[1]+1, e[2], e[3]+1], mask_2d)
+                for e, mask_2d in zip(extent_embs, masks_2d)
+            ]
 
             # mask_embs = [
             #     np.where(np.dstack([mask_2d]*3),
@@ -691,6 +709,8 @@ class ModelHandler:
             print(f"Nearest Neighbors time: {t2 - t1:.4f} seconds")
             # 3a) If you just want **one flat array** of all X “in Q” (within ε):
             sorted_indices = np.argsort(distances)
+
+
 
             # # Imprimo histograma con las similitudes
             # plt.hist(sim_embs, bins=50, alpha=0.7, color='blue')
