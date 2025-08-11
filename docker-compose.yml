@@ -404,7 +404,7 @@ volumes:
     driver: local
     driver_opts:
       type: none
-      device: /scratch/cvat/current_storage/cvat_logs
+      device: /scratch/cvat/current_storage/cvat_tmp
       o: bind
   cvat_inmem_db:      # Volatile data, not bind-mounted
   cvat_events_db:
