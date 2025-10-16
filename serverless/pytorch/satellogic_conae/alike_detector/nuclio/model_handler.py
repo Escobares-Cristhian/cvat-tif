@@ -10,6 +10,7 @@ import time
 import math
 
 import matplotlib.pyplot as plt
+import heapq
 
 MASK_THRESHOLD = 0.5
 
@@ -435,6 +436,7 @@ class ModelHandler:
             return 0.0
         return intersection / union
 
+
     def infer(self, image, label: str, annotations_proc: list[dict]):
         """
         Infer the model on the given image and return the results.
@@ -477,27 +479,63 @@ class ModelHandler:
             shapes_annot.append((h, w))
 
         # Process the image with the mask generator
-        with torch.no_grad(): # disable gradients for mask generation
-            self.mask_embeddings.clear()
-            segments = self.mask_generator.generate(img)
+        t1 = time.time()
+        with torch.no_grad():
+            # self.mask_embeddings.clear()
+
+            # === TILED GENERATION (preserves pixel spacing, caps VRAM) ===
+            # Choose tile size/overlap your GPU can handle; 1280/128 is a good start.
+            # Keep overlap as a multiple of SPACING_PX (e.g., 128 = 8 * 16) to align grids.
+            segments = self._generate_segments_tiled(
+                img,
+                tile=1280,     # try 1280 or 1536 depending on VRAM
+                overlap=128    # multiple of 16 keeps grids aligned
+            )
+        t2 = time.time()
+        print(f"########## Tiled generation: {len(segments)} segments in {t2 - t1:.4f} sec")
         print("Cantidad de segmentos obtenidos:", len(segments))
 
+        # --- Quedarme con los 3000 más estables, preservando el orden original ---
+        TOP_K = 3000
+        total_before = len(segments)
+
+        if total_before > TOP_K:
+            # (idx, score) para poder recuperar índices originales
+            scored = [(i, seg.get("stability_score", float("-inf"))) for i, seg in enumerate(segments)]
+            # Top-K por estabilidad (no importa el orden todavía)
+            topk_idx = [i for i, _ in heapq.nlargest(TOP_K, scored, key=lambda t: t[1])]
+            # Volver a ordenar por índice original para no romper alineaciones posteriores
+            keep_idx = sorted(topk_idx)
+            # Filtrar la lista de segmentos
+            segments = [segments[i] for i in keep_idx]
+        else:
+            keep_idx = list(range(total_before))
+
+        print(f"########## Stability filtering: kept {len(segments)}/{total_before} top stability_score")
+
         # Convert to CVAT masks
+        t1 = time.time()
         results, valid_indices = self._segments_to_cvat_masks(segments, label)
+        t2 = time.time()
+        print(f"########## _segments_to_cvat_masks time: {t2 - t1:.4f} seconds")
         print("Cantidad de segmentos procesados:", len(results))
 
-        # Retrieve embeddings
-        global_emb = self.mask_generator.predictor.saved_image_embeddings
-        if global_emb is not None:
-            global_emb = global_emb.detach().cpu().numpy()
-        mask_embs = np.array(self.mask_embeddings)[valid_indices]
-        print(f"shape mask_embs: {mask_embs.shape}")
+        # # Retrieve embeddings
+        # global_emb = self.mask_generator.predictor.saved_image_embeddings
+        # if global_emb is not None:
+        #     global_emb = global_emb.detach().cpu().numpy()
+        # # mask_embs_arrs = np.array(self.mask_embeddings)[valid_indices]
+        # embed_indices = [keep_idx[i] for i in valid_indices]
+        # mask_embs_arrs = np.array(self.mask_embeddings)[embed_indices]
+        # print(f"shape mask_embs: {mask_embs_arrs.shape}")
+
+        # if len(mask_embs_arrs) == 0:
+        #     raise ValueError("Not found any object candidates")
 
         # Pre-process mask_embs
-        if len(mask_embs) > 0:
-            mask_embs = [res["mask"] for res in results] # Extract binary masks and extent from the masks
-            extent_embs = [res[-4:] for res in mask_embs] # Extract extent from the masks
-            mask_embs = [np.array(emb[:-4]) for emb in mask_embs] # Remove extent from the masks
+        mask_embs = [res["mask"] for res in results] # Extract binary masks and extent from the masks
+        extent_embs = [res[-4:] for res in mask_embs] # Extract extent from the masks
+        mask_embs = [np.array(emb[:-4]) for emb in mask_embs] # Remove extent from the masks
 
         # ----- Filter by side threshold -----
         hw_max_annot = np.array(shapes_annot).max(axis=0)
@@ -505,7 +543,7 @@ class ModelHandler:
         print(f"Max side from annotations: ({hw_max_annot[0]:.2f}, {hw_max_annot[1]:.2f})")
         print(f"Min side from annotations: ({hw_min_annot[0]:.2f}, {hw_min_annot[1]:.2f})")
 
-        hw_max_mask = hw_max_annot * 1.0  # 1.5 times larger per side
+        hw_max_mask = hw_max_annot * 2.0  # 2 times larger per side
         hw_min_mask = hw_min_annot * 0.5  # 2 times smaller per side
 
         index_to_keep = [
@@ -519,6 +557,7 @@ class ModelHandler:
 
         mask_embs = [mask_embs[i] for i in index_to_keep]
         extent_embs = [extent_embs[i] for i in index_to_keep]
+        results = [results[i] for i in index_to_keep]
         print(f"Filtered mask embeddings by side threshold: {len(mask_embs)} remaining")
 
         # ----- Filter by area threshold -----
@@ -528,8 +567,8 @@ class ModelHandler:
         print(f"Min area from annotations: {area_min_annot:.2f}")
         # area_max_mask = area_max_annot * (3*3)      # 3 times larger per side
         # area_min_mask = area_min_annot * (1/3*1/3)  # 3 times smaller per side
-        area_max_mask = area_max_annot * 1      # 3 times larger per side
-        area_min_mask = area_min_annot * 0.5  # 3 times smaller per side
+        area_max_mask = area_max_annot * 4    # 4 times larger per side
+        area_min_mask = area_min_annot * 0.25 # 4 times smaller per side
         print(f"Max area for mask embeddings: {area_max_mask:.2f}")
         print(f"Min area for mask embeddings: {area_min_mask:.2f}")
 
@@ -543,6 +582,7 @@ class ModelHandler:
 
         mask_embs = [mask_embs[i] for i in index_to_keep]
         extent_embs = [extent_embs[i] for i in index_to_keep]
+        results = [results[i] for i in index_to_keep]
         print(f"Filtered mask embeddings by area threshold: {len(mask_embs)} remaining")
 
         # # Get mean annot_embeddings:
@@ -589,9 +629,11 @@ class ModelHandler:
             # ]
             # mask_embs = [self.squared_image_centered(img, e) for e in extent_embs]
             mask_embs = [
-                self.squared_image_centered(img, [e[0], e[1]+1, e[2], e[3]+1], mask_2d)
+                self.squared_image_centered(img, [e[0], e[1], e[2]+1, e[3]+1], mask_2d)
                 for e, mask_2d in zip(extent_embs, masks_2d)
             ]
+            t2 = time.time()
+            print(f"Time for cutting images: {t2 - t1:.4f} seconds")
 
             # mask_embs = [
             #     np.where(np.dstack([mask_2d]*3),
@@ -608,10 +650,10 @@ class ModelHandler:
 
             t2 = time.time()
             print(f"Mask embedding time: {t2 - t1:.4f} seconds")
-            for i in range(6):
+            for i in range(min(15, len(mask_embs))):
                 plt.imshow(mask_embs[i])
                 plt.title(f"Mask Embedding Example: {i}")
-                plt.savefig(f"mask_embs_{i}.png")
+                plt.savefig(f"label-{label}_mask_embs_{i}.png")
                 plt.close()
 
             # # # Make dim with 'real id', with the same 'real id' all the objects that IOU_threshold is greater than 0.5
@@ -624,13 +666,15 @@ class ModelHandler:
             # #         if iou > 0.5:
 
             t1 = time.time()
-            # Hacer esto más eficiente con la RAM:
-            if len(mask_embs) > 900:  # DEBUG: Selecciono los 900 primeros
-                print(f"Reducing mask embeddings to 900 samples for performance reasons.")
-                mask_embs = self.list_of_images_to_embeddings(mask_embs[:900])
-            else:
-                print(f"Using all {len(mask_embs)} mask embeddings.")
-                mask_embs = self.list_of_images_to_embeddings(mask_embs)
+            # # Hacer esto más eficiente con la RAM:
+            # if len(mask_embs) > 900:  # DEBUG: Selecciono los 900 primeros
+            #     print(f"Reducing mask embeddings to 900 samples for performance reasons.")
+            #     mask_embs = self.list_of_images_to_embeddings(mask_embs[:900])
+            # else:
+            #     print(f"Using all {len(mask_embs)} mask embeddings.")
+            #     mask_embs = self.list_of_images_to_embeddings(mask_embs)
+            print(f"Using all {len(mask_embs)} mask embeddings.")
+            mask_embs = self.list_of_images_to_embeddings(mask_embs)
             t2 = time.time()
             print(f"Mask embedding time (image_to_embedding): {t2 - t1:.4f} seconds")
 
@@ -643,14 +687,81 @@ class ModelHandler:
             annot_embeddings = np.array(self.annot_embeddings)
             mask_embs = np.array(mask_embs)
             print(f"shape mask_embs: {mask_embs.shape}")
-            print(f"annot_embeddings shape: {annot_embeddings.shape}")
+            print(f"shape annot_embeddings: {annot_embeddings.shape}")
 
-            # Average from:
-            #                   Dims    0   1   2    3   4
-            # shape mask_embs:        (455, 1, 256, 64, 64) -> (455, 256)
-            # shape annot_embeddings: (x,   1, 256, 64, 64) -> (x, 256)
-            mask_embs = np.mean(mask_embs, axis=(1, 3, 4))
-            annot_embeddings = np.mean(annot_embeddings, axis=(1, 3, 4))
+            # # Average from:
+            # #                   Dims    0   1   2    3   4
+            # # shape mask_embs:        (455, 1, 256, 64, 64) -> (455, 256)
+            # # shape annot_embeddings: (x,   1, 256, 64, 64) -> (x, 256)
+            # mask_embs = np.mean(mask_embs, axis=(1, 3, 4))
+            # annot_embeddings = np.mean(annot_embeddings, axis=(1, 3, 4))
+
+            # # MaxPool
+            # mask_embs = np.max(mask_embs, axis=(1, 3, 4))
+            # annot_embeddings = np.max(annot_embeddings, axis=(1, 3, 4))
+
+            # # Average + Max Concatenation
+            # mask_avg = np.mean(mask_embs, axis=(1, 3, 4))
+            # mask_max = np.max(mask_embs, axis=(1, 3, 4))
+            # mask_embs = np.concatenate([mask_avg, mask_max], axis=-1)
+
+            # annot_avg = np.mean(annot_embeddings, axis=(1, 3, 4))
+            # annot_max = np.max(annot_embeddings, axis=(1, 3, 4))
+            # annot_embeddings = np.concatenate([annot_avg, annot_max], axis=-1)
+
+            # # Average + Max Concatenation + Min Concatenation
+            # mask_avg = np.mean(mask_embs, axis=(1, 3, 4))
+            # mask_max = np.max(mask_embs, axis=(1, 3, 4))
+            # mask_min = np.min(mask_embs, axis=(1, 3, 4))
+            # mask_embs = np.concatenate([mask_avg, mask_max, mask_min], axis=-1)
+
+            # annot_avg = np.mean(annot_embeddings, axis=(1, 3, 4))
+            # annot_max = np.max(annot_embeddings, axis=(1, 3, 4))
+            # annot_min = np.min(annot_embeddings, axis=(1, 3, 4))
+            # annot_embeddings = np.concatenate([annot_avg, annot_max, annot_min], axis=-1)
+
+            # # Max Concatenation + Min Concatenation
+            # mask_max = np.max(mask_embs, axis=(1, 3, 4))
+            # mask_min = np.min(mask_embs, axis=(1, 3, 4))
+            # mask_embs = np.concatenate([mask_max, mask_min], axis=-1)
+
+            # annot_max = np.max(annot_embeddings, axis=(1, 3, 4))
+            # annot_min = np.min(annot_embeddings, axis=(1, 3, 4))
+            # annot_embeddings = np.concatenate([annot_max, annot_min], axis=-1)
+
+            # # ---- FFT reduction step ----
+            # def fft_reduce_features(X, k=64):
+            #     """
+            #     Apply FFT along the feature axis (dim=1).
+
+            #     Args:
+            #         X: (N, D)  e.g. (N, 768)
+            #         k: number of low-frequency coefficients to keep
+
+            #     Returns:
+            #         (N, k) real-valued features (magnitude of FFT)
+            #     """
+            #     F = np.fft.rfft(X, axis=1)        # (N, D//2+1)
+            #     mag = np.abs(F)                   # magnitude spectrum
+            #     return mag[:, :k]                 # keep only low-freq part
+
+            # # keep first 64 FFT coefficients
+            # mask_embs = fft_reduce_features(mask_embs, k=64)
+            # annot_embeddings = fft_reduce_features(annot_embeddings, k=64)
+
+            # # FFT Features
+            # def fft_features(arr, H_keep=4, W_keep=4):
+            #     x = arr.reshape(arr.shape[0], 256, 64, 64)
+            #     F = np.fft.rfft2(x, axes=(-2, -1))  # (N, 256, 64, 33)
+            #     mag = np.abs(F)[..., :H_keep, :W_keep]  # low-freq block
+            #     mean = mag.mean(axis=1)  # (N, H_keep, W_keep)
+            #     std  = mag.std(axis=1)   # (N, H_keep, W_keep)
+            #     return np.concatenate([mean.reshape(arr.shape[0], -1),
+            #                         std.reshape(arr.shape[0], -1)], axis=1)
+
+            # annot_embeddings = fft_features(annot_embeddings, H_keep=4, W_keep=4)  # (x, 32)
+            # mask_embs = fft_features(mask_embs,         H_keep=4, W_keep=4) # (n_mask, 32)
+
 
             # # Average from:
             # #                   Dims    0   1   2    3   4
@@ -682,55 +793,225 @@ class ModelHandler:
             # mask_embs = mask_embs.reshape(mask_embs.shape[0], -1)  # -> (455, 256*8*8)
             # annot_embeddings = annot_embeddings.reshape(annot_embeddings.shape[0], -1)  # -> (x, 256*8*8)
 
-            print(f"shape mask_embs: {mask_embs.shape}")
-            print(f"annot_embeddings shape: {annot_embeddings.shape}")
+            # print(f"Final shape mask_embs: {mask_embs.shape}")
+            # print(f"Final shape annot_embeddings: {annot_embeddings.shape}")
 
 
+            # from sklearn.neighbors import NearestNeighbors
+
+            # t1 = time.time()
+            # # nn = NearestNeighbors(n_neighbors=annot_embeddings.shape[0], metric='euclidean')
+            # nn = NearestNeighbors(n_neighbors=1, metric='euclidean')
+            # nn.fit(annot_embeddings)
+
+            # # mask_embs: (n,256) array of your big collection
+            # distances, q_idx = nn.kneighbors(mask_embs)
+
+            # # distances.shape  == (n,1) -> (n)
+            # # q_idx.shape      == (n,1) -> (n)
+            # # q_idx = q_idx.flatten()
+            # # distances = distances.flatten()
+
+            # # Keep minimum distance, first index
+            # # distances.shape  == (n,m) -> (n)
+            # # q_idx.shape      == (n,m) -> (n)
+            # distances = distances[:, 0]
+            # q_idx = q_idx[:, 0]
+
+            # # # filter out the X’s that are too far from any Q
+            # # epsilon = 0.1
+            # # mask = distances.flatten() < epsilon
+            # # X_filtered = mask_embs[mask]
+            # # q_idx_filtered = q_idx[mask]
+
+            # ---------------------------------------------------------------------------------------
+            # from sklearn.neighbors import NearestNeighbors
+            # from sklearn.metrics import pairwise_distances
+
+            # def _lse(x, axis=1):  # stable log-sum-exp
+            #     m = np.max(x, axis=axis, keepdims=True)
+            #     return (m + np.log(np.sum(np.exp(x - m), axis=axis, keepdims=True))).squeeze(axis)
+
+            # def _auto_kth(m: int) -> int:
+            #     # ~30% of (m-1), clamped to [1, 5] and to [1, m-1]
+            #     if m <= 2:
+            #         return 1
+            #     kth = int(round(0.3 * (m - 1)))
+            #     kth = max(1, min(5, kth))
+            #     return min(kth, m - 1)
+
+            # def _estimate_sigma(annot_embeddings, sample=None, kth=None, random_state=0):
+            #     A = np.asarray(annot_embeddings, dtype=np.float32)
+            #     m = A.shape[0]
+            #     if m == 0:
+            #         return 1.0  # arbitrary; won't be used if there's nothing to compare
+            #     if m == 1:
+            #         return 1.0  # sigma cancels out when m=1
+
+            #     rng = np.random.RandomState(random_state)
+            #     if sample is None or sample >= m:
+            #         sub = A
+            #     else:
+            #         idx = rng.choice(m, size=sample, replace=False)
+            #         sub = A[idx]
+
+            #     kth = _auto_kth(sub.shape[0]) if kth is None else int(kth)
+            #     kth = max(1, min(kth, sub.shape[0] - 1))
+            #     k = kth + 1  # +1 for self
+
+            #     nbrs = NearestNeighbors(n_neighbors=k, metric='euclidean').fit(sub)
+            #     dists, _ = nbrs.kneighbors(sub)
+            #     # take the kth neighbor (skip self at col 0)
+            #     sig = np.median(dists[:, -1])
+            #     return max(float(sig), 1e-8)
+
+            # def group_distance(mask_embs, annot_embeddings, normalize=True, max_k_value=None, sigma=None):
+            #     """Return one scalar distance per row in mask_embs (n,)."""
+            #     X = np.asarray(mask_embs, dtype=np.float32)
+            #     A = np.asarray(annot_embeddings, dtype=np.float32)
+
+            #     if X.size == 0:
+            #         return np.empty((0,), dtype=np.float32)
+
+            #     if normalize:
+            #         X = X / (np.linalg.norm(X, axis=1, keepdims=True) + 1e-12)
+            #         if A.size:
+            #             A = A / (np.linalg.norm(A, axis=1, keepdims=True) + 1e-12)
+
+            #     if sigma is None:
+            #         sigma = _estimate_sigma(A)
+
+            #     two_sigma2 = 2.0 * (sigma ** 2)
+
+            #     # exact if max_k_value is None or >= |A|
+            #     if (max_k_value is None) or (A.shape[0] == 0) or (max_k_value >= A.shape[0]):
+            #         D2 = pairwise_distances(X, A, metric='sqeuclidean') if A.size else np.full((X.shape[0], 0), np.inf)
+            #         if A.shape[0] == 0:
+            #             return np.full((X.shape[0],), np.inf, dtype=np.float32)
+            #         lme = _lse(-D2 / two_sigma2, axis=1) - np.log(A.shape[0])  # log-mean-exp
+            #         soft_d2 = -two_sigma2 * lme
+            #         distances = np.sqrt(np.maximum(soft_d2, 0.0))
+            #         return distances.astype(np.float32)
+
+            #     # approximate: only use top-K nearest valid neighbors per query
+            #     K = int(max_k_value)
+            #     nbrs = NearestNeighbors(n_neighbors=K, metric='euclidean').fit(A)
+            #     dists, _ = nbrs.kneighbors(X)  # (n, K) Euclidean
+            #     D2_topk = dists ** 2
+            #     lme = _lse(-D2_topk / two_sigma2, axis=1) - np.log(K)
+            #     soft_d2 = -two_sigma2 * lme
+            #     distances = np.sqrt(np.maximum(soft_d2, 0.0))
+            #     return distances.astype(np.float32)
+
+            # t1 = time.time()
+            # distances = group_distance(mask_embs, annot_embeddings, normalize=True, max_k_value=5)
+            # t2 = time.time()
+            # print(f"Nearest Neighbors time: {t2 - t1:.4f} seconds")
+
+            # --------------------------------------------------------------------------------------
+
+            from sklearn.decomposition import PCA
+            from sklearn.random_projection import SparseRandomProjection
             from sklearn.neighbors import NearestNeighbors
 
-            t1 = time.time()
-            nn = NearestNeighbors(n_neighbors=1, metric='euclidean')
-            nn.fit(annot_embeddings)
+            # --- pooling & normalization ---
+            def gem_pool(x, p=3.0, eps=1e-6):
+                """
+                x: (N,C,H,W) or (N,T,C,H,W) -> returns (N,C)
+                """
+                x = np.asarray(x)
+                if x.ndim == 5:  # (N,T,C,H,W) -> average over T (or pick something else if you prefer)
+                    x = x.mean(axis=1)
+                assert x.ndim == 4, f"expected 4D or 5D, got {x.shape}"
+                x = np.maximum(x, eps) ** p
+                x = x.mean(axis=(2, 3)) ** (1.0 / p)  # (N,C)
+                return x
 
-            # mask_embs: (n,256) array of your big collection
-            distances, q_idx = nn.kneighbors(mask_embs)
-            # distances.shape  == (n,1) -> (n)
-            # q_idx.shape      == (n,1) -> (n)
-            q_idx = q_idx.flatten()
-            distances = distances.flatten()
+            def powerlaw_l2(x, eps=1e-12):
+                x = np.sign(x) * np.sqrt(np.abs(x))   # power-law (RootSIFT-style)
+                x /= (np.linalg.norm(x, axis=1, keepdims=True) + eps)
+                return x
 
-            # # filter out the X’s that are too far from any Q
-            # epsilon = 0.1
-            # mask = distances.flatten() < epsilon
-            # X_filtered = mask_embs[mask]
-            # q_idx_filtered = q_idx[mask]
+            def make_features(arr, p=3.0):
+                f = gem_pool(arr, p=p)   # (N,256)
+                f = powerlaw_l2(f)       # power-law + L2
+                return f
 
-            t2 = time.time()
-            print(f"Nearest Neighbors time: {t2 - t1:.4f} seconds")
+            # --- build features ---
+            mask_feats  = make_features(mask_embs, p=3.0)         # queries
+            annot_feats = make_features(annot_embeddings, p=3.0)  # references (~5)
+
+            # --- dimension reduction (unsupervised) ---
+            if annot_feats.shape[0] >= 64:
+                reducer = PCA(n_components=64, whiten=True, random_state=0)
+            else:
+                reducer = SparseRandomProjection(n_components=128, random_state=0)
+
+            # Fit on both refs+queries (unsupervised; improves stability when refs are few)
+            reducer.fit(np.vstack([annot_feats, mask_feats]))
+
+            mask_z  = powerlaw_l2(reducer.transform(mask_feats))   # re-normalize after projection
+            annot_z = powerlaw_l2(reducer.transform(annot_feats))
+
+            # --- retrieval: cosine 1-NN (distance = 1 - cosine similarity) ---
+            nn = NearestNeighbors(n_neighbors=1, metric='cosine')
+            nn.fit(annot_z)
+            distances, q_idx = nn.kneighbors(mask_z)
+            distances = distances[:, 0]   # smaller = more similar
+            q_idx      = q_idx[:, 0]
+
+
             # 3a) If you just want **one flat array** of all X “in Q” (within ε):
+            print(f"len(distances) = {len(distances)}")
+            print(f"len(results)   = {len(results)}")
             sorted_indices = np.argsort(distances)
 
+            # Sort results by similarity
+            results = [results[i] for i in sorted_indices]
+            distances = [distances[i] for i in sorted_indices]
 
+            # index = distances
+            # index_name = "distance"
 
-            # # Imprimo histograma con las similitudes
-            # plt.hist(sim_embs, bins=50, alpha=0.7, color='blue')
-            # plt.title('Histogram of Similarities')
-            # plt.xlabel('Similarity')
+            # # Imprimo histograma con los index
+            # plt.hist(index, bins=50, alpha=0.7, color='blue')
+            # plt.title(f'Histogram of {index_name.capitalize()}')
+            # plt.xlabel(index_name.capitalize())
             # plt.ylabel('Frequency')
             # plt.grid(True)
-            # plt.savefig("similarities_histogram.png")
+            # plt.savefig(f"label-{label}_{index_name}_histogram.png")
             # plt.close()
 
-            # Sort results by similarity
-            # sorted_indices = np.argsort(sim_embs) #[::-1]
-            results = [results[i] for i in sorted_indices]
+            # # Plot distance
+            # plt.plot(index, marker='o', linestyle='-', color='blue')
+            # plt.title(f'{index_name.capitalize()}')
+            # plt.xlabel('order')
+            # plt.ylabel(index_name.capitalize())
+            # plt.grid(True)
+            # plt.savefig(f"label-{label}_{index_name}_plot.png")
+            # plt.close()
+
+            # # Plot distance first 100
+            # plt.plot(index[:100], marker='o', linestyle='-', color='blue')
+            # plt.title(f'{index_name.capitalize()} (first 100)')
+            # plt.xlabel('order')
+            # plt.ylabel(index_name.capitalize())
+            # plt.grid(True)
+            # plt.savefig(f"label-{label}_{index_name}_plot_first_100.png")
+            # plt.close()
+
+            # # Select the 1000 highest similarity indices
+            # results = results[:1000] if len(results) > 1000 else results
+            # distances = distances[:1000] if len(distances) > 1000 else distances
 
             # Select the 100 highest similarity indices
             results = results[:100] if len(results) > 100 else results
+            distances = distances[:100] if len(distances) > 100 else distances
 
 
         print(f"Final results count: {len(results)}")
 
+        # return results, distances
         return results
 
 
